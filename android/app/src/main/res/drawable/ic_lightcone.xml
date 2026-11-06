@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 系统开屏（Android 12+）用的图标：与 Flutter 开屏同一个光锥形状，
+     矢量绘制，不需要多套 PNG。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 光锥主体 -->
+    <path android:pathData="M54,30 L37,78 Q54,83 71,78 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="54"
+                android:startY="30"
+                android:endX="54"
+                android:endY="80"
+                android:startColor="#E6FFFFFF"
+                android:centerColor="#669CC0FF"
+                android:endColor="#1482B1FF" />
+        </aapt:attr>
+    </path>
+
+    <!-- 光点 -->
+    <path
+        android:pathData="M54,26 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"
+        android:fillColor="#F4F8FF" />
+    <path
+        android:pathData="M54,26 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0"
+        android:strokeColor="#99DDE9FF"
+        android:strokeWidth="1.6"
+        android:fillColor="#00000000" />
+</vector>

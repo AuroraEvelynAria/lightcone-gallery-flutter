@@ -1,0 +1,638 @@
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../data/models.dart';
+import '../media/media_channel.dart';
+import '../state/app_state.dart';
+import 'filtered_artworks_screen.dart';
+import 'viewer_screen.dart';
+
+/// 作品详情页：pixez 的信息层级 —— 大图（可翻页）→ 标题 → 画师 → PID/页数/日期
+/// → 标签（可点）→ 收藏 / 在 Pixiv 打开 / 移出作品库。
+///
+/// 图片只在当前页解码，并按屏宽 `cacheWidth` 缩采样；点图进全屏检视器才用原图。
+class ArtworkDetailScreen extends StatefulWidget {
+  const ArtworkDetailScreen({
+    super.key,
+    required this.state,
+    required this.pid,
+    this.initialPage = 0,
+    this.initialArtworkId,
+    this.heroTag,
+    this.onFavoriteChanged,
+  });
+
+  final AppState state;
+  final String pid;
+
+  /// 作品内的页码（artworks.page），不是列表下标。
+  final int initialPage;
+  final int? initialArtworkId;
+
+  /// 网格 → 详情页的 Hero 标记（与网格里那一格的 tag 一致）。
+  final Object? heroTag;
+  final ValueChanged<bool>? onFavoriteChanged;
+
+  @override
+  State<ArtworkDetailScreen> createState() => _ArtworkDetailScreenState();
+}
+
+class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
+  ArtworkDetail? _detail;
+  bool _loading = true;
+  Object? _error;
+  bool _favorite = false;
+  bool _busyFavorite = false;
+  bool _busyRating = false;
+  int _rating = 0;
+
+  /// 竖排长图的滚动控制器。
+  ScrollController? _scroll;
+  int _initialIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _scroll?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final detail = await widget.state.repo.artworkDetail(widget.pid);
+      if (!mounted) return;
+      final index = detail.pages.indexWhere(
+        (p) => p.page == widget.initialPage,
+      );
+      setState(() {
+        _detail = detail;
+        _favorite = detail.favorite;
+        _rating = detail.rating;
+        _initialIndex = index < 0 ? 0 : index;
+        _scroll = ScrollController();
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _setRating(int star) async {
+    if (_busyRating) return;
+    final previous = _rating;
+    final next = star == _rating ? 0 : star; // 再点同一颗星 = 清零
+    setState(() {
+      _rating = next;
+      _busyRating = true;
+    });
+    final updated = await widget.state.repo.setPidRating(widget.pid, next);
+    if (!mounted) return;
+    setState(() {
+      _busyRating = false;
+      if (updated == 0) _rating = previous;
+    });
+    if (updated == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('这张不在图库里，评分只对图库图片生效')),
+      );
+    }
+  }
+
+  Future<void> _toggleFavorite() async {    if (_busyFavorite) return;
+    final previous = _favorite;
+    final next = !_favorite;
+    setState(() {
+      _favorite = next;
+      _busyFavorite = true;
+    });
+    final updated = await widget.state.repo.setPidFavorite(widget.pid, next);
+    if (!mounted) return;
+    setState(() {
+      _busyFavorite = false;
+      // 不在 pixez 图库里的作品没有 images 行，收藏落不了地
+      if (updated == 0) _favorite = previous;
+    });
+    if (updated == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('这张不在图库里，收藏只对图库图片生效')),
+      );
+      return;
+    }
+    widget.onFavoriteChanged?.call(next);
+  }
+
+  Future<void> _openPixiv() async {
+    final ok = await MediaChannel.openUrl(
+      'https://www.pixiv.net/artworks/${widget.pid}',
+    );
+    if (!mounted || ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('没有可以打开链接的应用')),
+    );
+  }
+
+  Future<void> _copyPid() async {
+    await Clipboard.setData(ClipboardData(text: widget.pid));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已复制 PID ${widget.pid}')),
+    );
+  }
+
+  Future<void> _removeFromLibrary(ArtworkDetail detail) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('移出作品库？'),
+        content: Text(
+          'PID ${detail.pid} 的 ${detail.pages.length} 页都会移出（原图不会被删除），'
+          '重扫也不会收回。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('移出'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await widget.state.repo.removeArtworks(
+      detail.pages.map((p) => p.id).toList(growable: false),
+    );
+    widget.state.bumpData();
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  void _openViewer(ArtworkDetail detail, int index) {
+    final items = detail.pages
+        .map((p) => ViewerItem(
+              path: p.originalPath,
+              title: p.title?.isNotEmpty == true ? p.title! : 'PID ${p.pid}',
+            ))
+        .toList(growable: false);
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ViewerScreen(items: items, initialIndex: index),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final detail = _detail;
+    final title = detail?.displayTitle ?? 'PID ${widget.pid}';
+    return Scaffold(
+      // 沉浸式：图片顶到状态栏，返回/菜单浮在图上（pixez 的做法）
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        foregroundColor: Colors.white,
+        systemOverlayStyle: SystemUiOverlayStyle.light,
+        // 顶部压一层渐变，白图标压在浅色图上也能看清
+        flexibleSpace: const _TopScrim(),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 17,
+                color: Colors.white,
+                shadows: [Shadow(blurRadius: 8, color: Colors.black54)],
+              ),
+            ),
+            if (detail != null)
+              Text(
+                detail.artistLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w400,
+                  color: Colors.white70,
+                  shadows: [Shadow(blurRadius: 8, color: Colors.black54)],
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          if (detail != null && detail.pages.isNotEmpty)
+            PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'remove') _removeFromLibrary(detail);
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'remove', child: Text('移出作品库')),
+              ],
+            ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? _ErrorBody(error: _error!)
+              : detail == null
+                  ? const SizedBox.shrink()
+                  : CustomScrollView(
+                      controller: _scroll,
+                      slivers: [
+                        // 图片顶在最上面（主人要求）；标题/画师在顶栏一直可见，
+                        // 完整信息在长图之后。
+                        if (detail.pages.isEmpty)
+                          SliverToBoxAdapter(
+                            child: _MissingBody(onOpenPixiv: _openPixiv),
+                          )
+                        else
+                          _buildStrip(detail),
+                        SliverToBoxAdapter(child: _buildInfo(detail)),
+                      ],
+                    ),
+      // 长图可能几十页：动作放常驻底栏，滚到哪都能点
+      bottomNavigationBar: detail == null || detail.pages.isEmpty
+          ? null
+          : Material(
+              elevation: 8,
+              color: Theme.of(context).colorScheme.surface,
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _busyFavorite ? null : _toggleFavorite,
+                          icon: Icon(
+                            _favorite ? Icons.favorite : Icons.favorite_border,
+                          ),
+                          label: Text(_favorite ? '已收藏' : '收藏'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _openPixiv,
+                          icon: const Icon(Icons.open_in_new),
+                          label: const Text('在 Pixiv 打开'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
+
+  static const _stripGap = 2.0;
+
+  /// 详情页的图片一律走这个 provider：与 `Image.file(cacheWidth:)` 内部的
+  /// `ResizeImage(FileImage(...))` 完全一致 —— 只有 key 一致，缓存才会被命中。
+  ImageProvider _pageProvider(ArtworkRow page, int cacheWidth) =>
+      ResizeImage.resizeIfNeeded(
+        cacheWidth,
+        null,
+        FileImage(File(page.originalPath)),
+      );
+
+  /// 竖排长图（pixez 的「看的时候拼成长图」）：所有页按原始比例竖向拼接，
+  /// 像一条长卷滚下来，不再横向翻页。点任意一页进单张检视器（左右滑）。
+  ///
+  /// 用 SliverList 而不是把 51 张全塞进 Column：只有可视区域附近才会构建、
+  /// 解码，内存不会被整本画集撑爆。
+  Widget _buildStrip(ArtworkDetail detail) {
+    final media = MediaQuery.of(context);
+    final width = media.size.width;
+    final cacheWidth = (width * media.devicePixelRatio).round();
+    return SliverList.separated(
+      itemCount: detail.pages.length,
+      separatorBuilder: (_, _) => const SizedBox(height: _stripGap),
+      itemBuilder: (context, index) {
+        final page = detail.pages[index];
+        Widget content = SizedBox(
+          width: width,
+          height: width / page.aspectRatio,
+          child: Image(
+            image: _pageProvider(page, cacheWidth),
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+            errorBuilder: (_, _, _) => const Center(
+              child: Icon(Icons.broken_image_outlined, size: 40),
+            ),
+          ),
+        );
+        // 第一页右下角挂 R-18 角标（左上会被状态栏/返回键压住）
+        if (index == 0 && detail.xRestrict > 0) {
+          content = Stack(
+            clipBehavior: Clip.none,
+            children: [
+              content,
+              const Positioned(
+                right: 10,
+                bottom: 10,
+                child: _CounterPill(text: 'R-18', danger: true),
+              ),
+            ],
+          );
+        }
+        Widget tappable = GestureDetector(
+          onTap: () => _openViewer(detail, index),
+          child: content,
+        );
+        // 只让点进来的那一页参与 Hero，避免同一 PID 多页 tag 冲突
+        if (index == _initialIndex && widget.heroTag != null) {
+          tappable = Hero(tag: widget.heroTag!, child: tappable);
+        }
+        return tappable;
+      },
+    );
+  }
+
+  Widget _buildInfo(ArtworkDetail detail) {
+    final theme = Theme.of(context);
+    final artistUid = detail.artistUid;
+    final initial = detail.artistLabel.characters.first;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            detail.displayTitle,
+            style: theme.textTheme.titleLarge?.copyWith(height: 1.35),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: theme.colorScheme.primaryContainer,
+                child: Text(
+                  initial,
+                  style: TextStyle(color: theme.colorScheme.onPrimaryContainer),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      detail.artistLabel,
+                      style: theme.textTheme.bodyLarge,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (artistUid != null)
+                      Text('UID $artistUid', style: theme.textTheme.labelSmall),
+                  ],
+                ),
+              ),
+              if (artistUid != null)
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => FilteredArtworksScreen(
+                          state: widget.state,
+                          title: detail.artistLabel,
+                          artistUid: artistUid,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('全部作品'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _MetaChip(
+                icon: Icons.tag,
+                label: 'PID ${detail.pid}',
+                onTap: _copyPid,
+              ),
+              _MetaChip(
+                icon: Icons.photo_library_outlined,
+                label: '${detail.pages.length} 页',
+              ),
+              if (detail.createDate != null && detail.createDate!.length >= 10)
+                _MetaChip(
+                  icon: Icons.cloud_upload_outlined,
+                  label: '上传 ${detail.createDate!.substring(0, 10)}',
+                ),
+              // 保存时间单独一个：取自本地文件的 modified_at，不是 Pixiv 的日期
+              if ((detail.savedAt ?? 0) > 0)
+                _MetaChip(
+                  icon: Icons.save_alt_outlined,
+                  label: '保存 ${_formatDate(detail.savedAt!)}',
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          // 评分：一个作品一组，点同一颗星可以清零
+          Row(
+            children: [
+              Text('评分', style: theme.textTheme.labelMedium),
+              const SizedBox(width: 6),
+              for (var star = 1; star <= 5; star++)
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                  iconSize: 22,
+                  color: star <= _rating
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.outline,
+                  icon: Icon(
+                    star <= _rating ? Icons.star_rounded : Icons.star_border_rounded,
+                  ),
+                  onPressed: _busyRating ? null : () => _setRating(star),
+                ),
+            ],
+          ),
+          if (detail.tags.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final tag in detail.tags)
+                  ActionChip(
+                    label: Text(tag),
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => FilteredArtworksScreen(
+                            state: widget.state,
+                            title: '#$tag',
+                            tags: [tag],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 22),
+          // 收藏 / 打开放在底部常驻栏：51 页的长图滚到底要两万多像素，
+          // 动作不能埋在信息的最后。
+        ],
+      ),
+    );
+  }
+}
+
+/// AppBar 背后的顶部渐变：沉浸式图片上方压一层黑，白色图标与标题才立得住。
+class _TopScrim extends StatelessWidget {
+  const _TopScrim();
+
+  @override
+  Widget build(BuildContext context) {
+    return const IgnorePointer(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0x99000000), Color(0x00000000)],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 秒级时间戳 → YYYY-MM-DD（本地时区）。
+String _formatDate(int seconds) {
+  final d = DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${d.year}-${two(d.month)}-${two(d.day)}';
+}
+
+class _MetaChip extends StatelessWidget {  const _MetaChip({required this.icon, required this.label, this.onTap});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14),
+              const SizedBox(width: 6),
+              Text(label, style: Theme.of(context).textTheme.labelMedium),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CounterPill extends StatelessWidget {
+  const _CounterPill({required this.text, this.danger = false});
+
+  final String text;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: danger ? const Color(0xCCB3261E) : Colors.black45,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(color: Colors.white, fontSize: 11),
+      ),
+    );
+  }
+}
+
+class _MissingBody extends StatelessWidget {
+  const _MissingBody({required this.onOpenPixiv});
+
+  final VoidCallback onOpenPixiv;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
+      child: Column(
+        children: [
+          const Icon(Icons.image_not_supported_outlined, size: 40),
+          const SizedBox(height: 10),
+          const Text('本机没有这个作品的文件'),
+          const SizedBox(height: 6),
+          Text(
+            '可以先扫描一次，或在 Pixiv 上查看',
+            style: Theme.of(context).textTheme.labelSmall,
+          ),
+          const SizedBox(height: 14),
+          OutlinedButton(onPressed: onOpenPixiv, child: const Text('在 Pixiv 打开')),
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorBody extends StatelessWidget {
+  const _ErrorBody({required this.error});
+
+  final Object error;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, color: Theme.of(context).colorScheme.error),
+            const SizedBox(height: 8),
+            Text('读取失败：$error', textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../media/media_channel.dart';
+
 /// 检视条目：路径 + 标题（图库与作品库共用同一个检视器）。
 class ViewerItem {
   const ViewerItem({required this.path, required this.title});
@@ -12,6 +14,8 @@ class ViewerItem {
 
 /// 全屏检视器：左右翻页（PageView）+ 双指缩放（InteractiveViewer）。
 /// 原图只在这里解码 —— 网格里永远不碰大图。
+///
+/// 顶栏带分享与「设为壁纸」，直接对当前这张图操作。
 class ViewerScreen extends StatefulWidget {
   const ViewerScreen({super.key, required this.items, required this.initialIndex});
 
@@ -33,6 +37,47 @@ class _ViewerScreenState extends State<ViewerScreen> {
     super.dispose();
   }
 
+  Future<void> _share() async {
+    final item = widget.items[_index];
+    final ok = await MediaChannel.shareImages([item.path], text: item.title);
+    if (!mounted || ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('分享失败：没有可用的应用或文件不存在')),
+    );
+  }
+
+  Future<void> _setWallpaper() async {
+    final target = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('设为壁纸'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'home'),
+            child: const Text('主屏幕'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'lock'),
+            child: const Text('锁屏'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'both'),
+            child: const Text('主屏幕 + 锁屏'),
+          ),
+        ],
+      ),
+    );
+    if (target == null) return;
+    final ok = await MediaChannel.setWallpaper(
+      widget.items[_index].path,
+      target: target,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(ok ? '已设为壁纸' : '设置壁纸失败')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -41,6 +86,21 @@ class _ViewerScreenState extends State<ViewerScreen> {
       appBar: AppBar(
         backgroundColor: Colors.black45,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.share_outlined),
+            tooltip: '分享',
+            onPressed: _share,
+          ),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'wallpaper') _setWallpaper();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'wallpaper', child: Text('设为壁纸…')),
+            ],
+          ),
+        ],
         title: Text(
           '${_index + 1} / ${widget.items.length} · ${widget.items[_index].title}',
           maxLines: 1,

@@ -2,6 +2,7 @@ package com.lightcone.gallery.flutter
 
 import android.Manifest
 import android.app.Activity
+import android.app.WallpaperManager
 import android.content.ContentUris
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,8 +15,10 @@ import android.os.Looper
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.util.Size
+import android.webkit.MimeTypeMap
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -91,6 +94,8 @@ class MediaStoreChannel(
             "pickDirectory" -> pickDirectory(result)
             "exportBackup" -> exportBackup(call, result)
             "openUrl" -> openUrl(call, result)
+            "shareImages" -> shareImages(call, result)
+            "setWallpaper" -> setWallpaper(call, result)
             else -> result.notImplemented()
         }
     }
@@ -244,6 +249,87 @@ class MediaStoreChannel(
             }.getOrNull()
             main.post { result.success(path) }
         }
+    }
+
+    /** 系统分享：一张走 ACTION_SEND，多张走 ACTION_SEND_MULTIPLE。 */
+    private fun shareImages(call: MethodCall, result: MethodChannel.Result) {
+        val paths = call.argument<List<String>>("paths") ?: emptyList()
+        val text = call.argument<String>("text")
+        if (paths.isEmpty()) {
+            result.error("share", "没有要分享的文件", null)
+            return
+        }
+        val uris = ArrayList<Uri>()
+        for (path in paths) {
+            val file = File(path)
+            if (!file.exists()) continue
+            uris.add(
+                FileProvider.getUriForFile(
+                    activity,
+                    "${activity.packageName}.fileprovider",
+                    file,
+                ),
+            )
+        }
+        if (uris.isEmpty()) {
+            result.error("share", "文件不存在", null)
+            return
+        }
+        val intent = if (uris.size == 1) {
+            Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, uris[0])
+        } else {
+            Intent(Intent.ACTION_SEND_MULTIPLE)
+                .putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        }
+        intent.type = mimeOf(paths.first())
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (!text.isNullOrBlank()) intent.putExtra(Intent.EXTRA_TEXT, text)
+        activity.startActivity(Intent.createChooser(intent, "分享图片"))
+        result.success(true)
+    }
+
+    /** 设为壁纸：target = home / lock / both。解码按屏幕宽降采样，避免大图 OOM。 */
+    private fun setWallpaper(call: MethodCall, result: MethodChannel.Result) {
+        val path = call.argument<String>("path")
+        val target = call.argument<String>("target") ?: "home"
+        if (path == null || !File(path).exists()) {
+            result.error("setWallpaper", "文件不存在", null)
+            return
+        }
+        io.execute {
+            val outcome = runCatching {
+                val manager = WallpaperManager.getInstance(activity)
+                val width = activity.resources.displayMetrics.widthPixels
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(path, bounds)
+                var sample = 1
+                while (bounds.outWidth / (sample * 2) >= width) sample *= 2
+                val bitmap = BitmapFactory.decodeFile(
+                    path,
+                    BitmapFactory.Options().apply { inSampleSize = sample },
+                ) ?: error("图片解码失败")
+                val flags = when (target) {
+                    "lock" -> WallpaperManager.FLAG_LOCK
+                    "both" -> WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK
+                    else -> WallpaperManager.FLAG_SYSTEM
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    manager.setBitmap(bitmap, null, true, flags)
+                } else {
+                    manager.setBitmap(bitmap)
+                }
+                bitmap.recycle()
+            }
+            main.post {
+                outcome.onSuccess { result.success(true) }
+                    .onFailure { result.error("setWallpaper", it.message ?: "设置失败", null) }
+            }
+        }
+    }
+
+    private fun mimeOf(path: String): String {
+        val ext = path.substringAfterLast('.', "").lowercase()
+        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "image/*"
     }
 
     /** 系统浏览器 / Pixiv App 打开作品页（详情页的「在 Pixiv 打开」）。 */

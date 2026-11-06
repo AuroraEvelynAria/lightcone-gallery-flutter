@@ -142,6 +142,29 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
     );
   }
 
+  /// 分享整个作品：多页会一次带上（ACTION_SEND_MULTIPLE）。
+  Future<void> _shareAll(ArtworkDetail detail) async {
+    final paths = detail.pages
+        .map((page) => page.originalPath)
+        .toList(growable: false);
+    final ok = await MediaChannel.shareImages(paths, text: detail.displayTitle);
+    if (!mounted || ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('分享失败：没有可用的应用或文件不存在')),
+    );
+  }
+
+  Future<void> _setWallpaper(ArtworkDetail detail, String target) async {
+    final ok = await MediaChannel.setWallpaper(
+      detail.pages.first.originalPath,
+      target: target,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(ok ? '已设为壁纸' : '设置壁纸失败')),
+    );
+  }
+
   Future<void> _copyPid() async {
     await Clipboard.setData(ClipboardData(text: widget.pid));
     if (!mounted) return;
@@ -237,15 +260,34 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
           ],
         ),
         actions: [
-          if (detail != null && detail.pages.isNotEmpty)
+          if (detail != null && detail.pages.isNotEmpty) ...[
+            IconButton(
+              icon: const Icon(Icons.share_outlined),
+              tooltip: '分享',
+              onPressed: () => _shareAll(detail),
+            ),
             PopupMenuButton<String>(
               onSelected: (value) {
-                if (value == 'remove') _removeFromLibrary(detail);
+                switch (value) {
+                  case 'remove':
+                    _removeFromLibrary(detail);
+                  case 'wall-home':
+                    _setWallpaper(detail, 'home');
+                  case 'wall-lock':
+                    _setWallpaper(detail, 'lock');
+                  case 'wall-both':
+                    _setWallpaper(detail, 'both');
+                }
               },
               itemBuilder: (_) => const [
+                PopupMenuItem(value: 'wall-home', child: Text('设为壁纸（主屏）')),
+                PopupMenuItem(value: 'wall-lock', child: Text('设为壁纸（锁屏）')),
+                PopupMenuItem(value: 'wall-both', child: Text('设为壁纸（主屏 + 锁屏）')),
+                PopupMenuDivider(),
                 PopupMenuItem(value: 'remove', child: Text('移出作品库')),
               ],
             ),
+          ],
         ],
       ),
       body: _loading

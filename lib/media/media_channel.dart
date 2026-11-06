@@ -74,6 +74,33 @@ class MediaChannel {
         {'source': sourcePath, 'name': name},
       );
 
+  /// 系统分享：单张走 ACTION_SEND，多张走 ACTION_SEND_MULTIPLE。
+  static Future<bool> shareImages(List<String> paths, {String? text}) async {
+    if (paths.isEmpty) return false;
+    try {
+      return await _channel.invokeMethod<bool>(
+            'shareImages',
+            {'paths': paths, 'text': text},
+          ) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 设为壁纸：target = home / lock / both。
+  static Future<bool> setWallpaper(String path, {String target = 'home'}) async {
+    try {
+      return await _channel.invokeMethod<bool>(
+            'setWallpaper',
+            {'path': path, 'target': target},
+          ) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// 系统浏览器 / Pixiv App 打开链接（详情页的「在 Pixiv 打开」）。
   static Future<bool> openUrl(String url) async {
     try {

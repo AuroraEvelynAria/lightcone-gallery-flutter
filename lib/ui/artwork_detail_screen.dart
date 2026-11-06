@@ -143,14 +143,39 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
   }
 
   /// 分享整个作品：多页会一次带上（ACTION_SEND_MULTIPLE）。
-  Future<void> _shareAll(ArtworkDetail detail) async {
+  Future<void> _shareAll(ArtworkDetail detail, {bool asFile = false}) async {
     final paths = detail.pages
         .map((page) => page.originalPath)
         .toList(growable: false);
-    final ok = await MediaChannel.shareImages(paths, text: detail.displayTitle);
+    final ok = await MediaChannel.shareImages(
+      paths,
+      text: detail.displayTitle,
+      asFile: asFile,
+    );
     if (!mounted || ok) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('分享失败：没有可用的应用或文件不存在')),
+    );
+  }
+
+  /// 把作品的每一页原图存进相册 Pictures/LightCone。
+  Future<void> _saveToGallery(ArtworkDetail detail) async {
+    var saved = 0;
+    for (final page in detail.pages) {
+      final name = page.originalPath.split('/').last;
+      if (await MediaChannel.saveToGallery(page.originalPath, name: name)) {
+        saved++;
+      }
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          saved == detail.pages.length
+              ? '已保存 $saved 张到相册 Pictures/LightCone'
+              : '保存了 $saved / ${detail.pages.length} 张',
+        ),
+      ),
     );
   }
 
@@ -248,14 +273,21 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
                     _setWallpaper(detail, 'home');
                   case 'wall-lock':
                     _setWallpaper(detail, 'lock');
-                  case 'wall-both':
-                    _setWallpaper(detail, 'both');
+                case 'wall-both':
+                  _setWallpaper(detail, 'both');
+                case 'share-file':
+                  _shareAll(detail, asFile: true);
+                case 'save':
+                  _saveToGallery(detail);
                 }
               },
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'wall-home', child: Text('设为壁纸（主屏）')),
                 PopupMenuItem(value: 'wall-lock', child: Text('设为壁纸（锁屏）')),
                 PopupMenuItem(value: 'wall-both', child: Text('设为壁纸（主屏 + 锁屏）')),
+                PopupMenuDivider(),
+                PopupMenuItem(value: 'share-file', child: Text('以文件分享（不压缩）')),
+                PopupMenuItem(value: 'save', child: Text('保存原图到相册')),
                 PopupMenuDivider(),
                 PopupMenuItem(value: 'remove', child: Text('移出作品库')),
               ],

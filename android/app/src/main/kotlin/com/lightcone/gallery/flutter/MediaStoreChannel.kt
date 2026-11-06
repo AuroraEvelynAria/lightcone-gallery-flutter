@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.WallpaperManager
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -95,6 +96,7 @@ class MediaStoreChannel(
             "exportBackup" -> exportBackup(call, result)
             "openUrl" -> openUrl(call, result)
             "shareImages" -> shareImages(call, result)
+            "saveToGallery" -> saveToGallery(call, result)
             "setWallpaper" -> setWallpaper(call, result)
             else -> result.notImplemented()
         }
@@ -255,6 +257,8 @@ class MediaStoreChannel(
     private fun shareImages(call: MethodCall, result: MethodChannel.Result) {
         val paths = call.argument<List<String>>("paths") ?: emptyList()
         val text = call.argument<String>("text")
+        // 以「文件」分享：接收方（微信/QQ）按文件处理，不会再压成聊天图
+        val asFile = call.argument<Boolean>("asFile") ?: false
         if (paths.isEmpty()) {
             result.error("share", "没有要分享的文件", null)
             return
@@ -281,11 +285,47 @@ class MediaStoreChannel(
             Intent(Intent.ACTION_SEND_MULTIPLE)
                 .putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
         }
-        intent.type = mimeOf(paths.first())
+        intent.type = if (asFile) "application/octet-stream" else mimeOf(paths.first())
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         if (!text.isNullOrBlank()) intent.putExtra(Intent.EXTRA_TEXT, text)
         activity.startActivity(Intent.createChooser(intent, "分享图片"))
         result.success(true)
+    }
+
+    /** 保存原图到相册（Pictures/LightCone），发送时勾「原图」即可不压缩。 */
+    private fun saveToGallery(call: MethodCall, result: MethodChannel.Result) {
+        val path = call.argument<String>("path")
+        if (path == null || !File(path).exists()) {
+            result.error("saveToGallery", "文件不存在", null)
+            return
+        }
+        val name = call.argument<String>("name") ?: File(path).name
+        io.execute {
+            val outcome = runCatching {
+                val resolver = activity.contentResolver
+                val values = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                    put(MediaStore.Images.Media.MIME_TYPE, mimeOf(path))
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(
+                            MediaStore.Images.Media.RELATIVE_PATH,
+                            "Pictures/LightCone",
+                        )
+                    }
+                }
+                val uri = resolver.insert(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    values,
+                ) ?: error("无法创建相册条目")
+                resolver.openOutputStream(uri)?.use { out ->
+                    File(path).inputStream().use { input -> input.copyTo(out) }
+                } ?: error("无法写入相册")
+            }
+            main.post {
+                outcome.onSuccess { result.success(true) }
+                    .onFailure { result.error("saveToGallery", it.message ?: "保存失败", null) }
+            }
+        }
     }
 
     /** 设为壁纸：target = home / lock / both。解码按屏幕宽降采样，避免大图 OOM。 */

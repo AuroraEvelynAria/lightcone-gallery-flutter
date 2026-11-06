@@ -37,12 +37,26 @@ class _ViewerScreenState extends State<ViewerScreen> {
     super.dispose();
   }
 
-  Future<void> _share() async {
+  Future<void> _share({bool asFile = false}) async {
     final item = widget.items[_index];
-    final ok = await MediaChannel.shareImages([item.path], text: item.title);
+    final ok = await MediaChannel.shareImages(
+      [item.path],
+      text: item.title,
+      asFile: asFile,
+    );
     if (!mounted || ok) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('分享失败：没有可用的应用或文件不存在')),
+    );
+  }
+
+  Future<void> _saveToGallery() async {
+    final item = widget.items[_index];
+    final name = item.path.split('/').last;
+    final ok = await MediaChannel.saveToGallery(item.path, name: name);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(ok ? '已保存到相册 Pictures/LightCone' : '保存失败')),
     );
   }
 
@@ -94,10 +108,19 @@ class _ViewerScreenState extends State<ViewerScreen> {
           ),
           PopupMenuButton<String>(
             onSelected: (value) {
-              if (value == 'wallpaper') _setWallpaper();
+              switch (value) {
+                case 'wallpaper':
+                  _setWallpaper();
+                case 'share-file':
+                  _share(asFile: true);
+                case 'save':
+                  _saveToGallery();
+              }
             },
             itemBuilder: (_) => const [
               PopupMenuItem(value: 'wallpaper', child: Text('设为壁纸…')),
+              PopupMenuItem(value: 'share-file', child: Text('以文件分享（不压缩）')),
+              PopupMenuItem(value: 'save', child: Text('保存原图到相册')),
             ],
           ),
         ],

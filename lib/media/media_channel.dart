@@ -75,12 +75,30 @@ class MediaChannel {
       );
 
   /// 系统分享：单张走 ACTION_SEND，多张走 ACTION_SEND_MULTIPLE。
-  static Future<bool> shareImages(List<String> paths, {String? text}) async {
+  /// `asFile` = 以文件分享，接收方不会再把它压成聊天图。
+  static Future<bool> shareImages(
+    List<String> paths, {
+    String? text,
+    bool asFile = false,
+  }) async {
     if (paths.isEmpty) return false;
     try {
       return await _channel.invokeMethod<bool>(
             'shareImages',
-            {'paths': paths, 'text': text},
+            {'paths': paths, 'text': text, 'asFile': asFile},
+          ) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 保存原图到相册 Pictures/LightCone。
+  static Future<bool> saveToGallery(String path, {String? name}) async {
+    try {
+      return await _channel.invokeMethod<bool>(
+            'saveToGallery',
+            {'path': path, 'name': name},
           ) ??
           false;
     } catch (_) {

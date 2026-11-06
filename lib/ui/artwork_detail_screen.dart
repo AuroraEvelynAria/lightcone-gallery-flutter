@@ -219,7 +219,6 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final detail = _detail;
-    final title = detail?.displayTitle ?? 'PID ${widget.pid}';
     return Scaffold(
       // 沉浸式：图片顶到状态栏，返回/菜单浮在图上（pixez 的做法）
       extendBodyBehindAppBar: true,
@@ -229,36 +228,10 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
         scrolledUnderElevation: 0,
         foregroundColor: Colors.white,
         systemOverlayStyle: SystemUiOverlayStyle.light,
-        // 顶部压一层渐变，白图标压在浅色图上也能看清
+        // pixez 的详情顶栏只有图标浮在图上，没有标题和整条黑罩 —— 图优先
         flexibleSpace: const _TopScrim(),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 17,
-                color: Colors.white,
-                shadows: [Shadow(blurRadius: 8, color: Colors.black54)],
-              ),
-            ),
-            if (detail != null)
-              Text(
-                detail.artistLabel,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.white70,
-                  shadows: [Shadow(blurRadius: 8, color: Colors.black54)],
-                ),
-              ),
-          ],
-        ),
+        // 标题/画师在图片下方的信息区，顶栏不占视觉
+        title: null,
         actions: [
           if (detail != null && detail.pages.isNotEmpty) ...[
             IconButton(
@@ -550,7 +523,8 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
   }
 }
 
-/// AppBar 背后的顶部渐变：沉浸式图片上方压一层黑，白色图标与标题才立得住。
+/// AppBar 背后的顶部渐变：只压很薄一层，保证白色图标在浅色图上可见，
+/// 又不至于把短图整条盖黑（pixez 干脆没有，这里留一点可读性）。
 class _TopScrim extends StatelessWidget {
   const _TopScrim();
 
@@ -562,7 +536,8 @@ class _TopScrim extends StatelessWidget {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0x99000000), Color(0x00000000)],
+            colors: [Color(0x66000000), Color(0x00000000)],
+            stops: [0.0, 1.0],
           ),
         ),
       ),

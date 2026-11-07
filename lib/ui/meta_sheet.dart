@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../pixiv/artist_avatar.dart';
 import '../state/app_state.dart';
 
 /// 元数据补全面板：待补全计数 / 代理 / 开始 / 停止 / 进度。
@@ -28,12 +29,14 @@ class _MetaSheet extends StatefulWidget {
 class _MetaSheetState extends State<_MetaSheet> {
   final _proxyController = TextEditingController();
   int? _pending;
+  int? _pendingAvatars;
   bool _running = false;
   bool _stopRequested = false;
   int _processed = 0;
   int _total = 0;
   int _fetched = 0;
   int _failed = 0;
+  bool _avatarPhase = false;
   String? _message;
 
   @override
@@ -51,10 +54,12 @@ class _MetaSheetState extends State<_MetaSheet> {
   Future<void> _load() async {
     final proxy = await widget.state.repo.setting('pixiv_proxy') ?? '';
     final pending = await widget.state.repo.pendingMetaCount();
+    final pendingAvatars = await ArtistAvatarStore.pendingCount(widget.state.repo);
     if (!mounted) return;
     setState(() {
       _proxyController.text = proxy;
       _pending = pending;
+      _pendingAvatars = pendingAvatars;
     });
   }
 
@@ -72,8 +77,10 @@ class _MetaSheetState extends State<_MetaSheet> {
       _total = 0;
       _fetched = 0;
       _failed = 0;
+      _avatarPhase = false;
       _message = null;
     });
+    // 1) 作品元数据
     final result = await widget.state.fetchMeta(
       isStopped: () => _stopRequested,
       onProgress: (processed, total) {
@@ -93,10 +100,41 @@ class _MetaSheetState extends State<_MetaSheet> {
       },
     );
     if (!mounted) return;
-    setState(() {
-      _running = false;
-      _message = result;
-    });
+    setState(() => _message = result);
+
+    // 2) 画师头像：元数据之后跑，已有的直接跳过（全增量）
+    if (!_stopRequested) {
+      if (mounted) {
+        setState(() {
+          _processed = 0;
+          _total = 0;
+          _avatarPhase = true;
+          _message = '元数据完成，开始补画师头像…';
+        });
+      }
+      final avatars = await ArtistAvatarStore.syncAll(
+        widget.state.repo,
+        watchStop: () => _stopRequested,
+        onProgress: (done, total) {
+          if (!mounted) return;
+          setState(() {
+            _processed = done;
+            _total = total;
+          });
+        },
+      );
+      if (!mounted) return;
+      final summary = StringBuffer('头像：新补 ${avatars.fetched} · '
+          '跳过已有 ${avatars.skipped}');
+      if (avatars.none > 0) summary.write(' · 无头像 ${avatars.none}');
+      if (avatars.failed > 0) summary.write(' · 失败 ${avatars.failed}');
+      if (avatars.stopped) summary.write(' · 已停止');
+      if (avatars.aborted) summary.write(' · ${avatars.error}');
+      setState(() => _message = '$result\n$summary');
+    }
+
+    if (!mounted) return;
+    setState(() => _running = false);
     await _load();
   }
 
@@ -119,6 +157,15 @@ class _MetaSheetState extends State<_MetaSheet> {
                       ? '全部作品都有元数据了'
                       : '还有 $pending 个 PID 待补全',
             ),
+            const SizedBox(height: 2),
+            Text(
+              _pendingAvatars == null
+                  ? '头像：统计中…'
+                  : _pendingAvatars == 0
+                      ? '画师头像已经都补过了'
+                      : '画师头像还有 $_pendingAvatars 个没补（已有的会跳过）',
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
             if (_running) ...[
               const SizedBox(height: 12),
               LinearProgressIndicator(
@@ -126,7 +173,9 @@ class _MetaSheetState extends State<_MetaSheet> {
               ),
               const SizedBox(height: 6),
               Text(
-                '本批 $_processed/$_total · 成功 $_fetched · 失败 $_failed',
+                _avatarPhase
+                    ? '画师头像 $_processed/$_total'
+                    : '本批 $_processed/$_total · 成功 $_fetched · 失败 $_failed',
                 style: Theme.of(context).textTheme.labelSmall,
               ),
             ],
@@ -162,7 +211,10 @@ class _MetaSheetState extends State<_MetaSheet> {
                 FilledButton(
                   onPressed: _running
                       ? null
-                      : (pending == null || pending == 0 ? null : _start),
+                      : (pending == null || pending == 0) &&
+                              (_pendingAvatars == null || _pendingAvatars == 0)
+                          ? null
+                          : _start,
                   child: const Text('开始补全'),
                 ),
                 const SizedBox(width: 8),

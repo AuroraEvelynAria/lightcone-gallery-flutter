@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import '../data/models.dart';
 import '../media/media_channel.dart';
 import '../state/app_state.dart';
+import 'artist_avatar_view.dart';
+import 'artist_screen.dart';
 import 'filtered_artworks_screen.dart';
 import 'page_stage.dart';
 import 'viewer_screen.dart';
@@ -87,6 +89,20 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
         _loading = false;
       });
     }
+  }
+
+  void _openArtist(ArtworkDetail detail) {
+    final uid = detail.artistUid;
+    if (uid == null || uid.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ArtistScreen(
+          state: widget.state,
+          uid: uid,
+          initialName: detail.artistLabel,
+        ),
+      ),
+    );
   }
 
   Future<void> _setRating(int star) async {
@@ -403,7 +419,6 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
   Widget _buildInfo(ArtworkDetail detail) {
     final theme = Theme.of(context);
     final artistUid = detail.artistUid;
-    final initial = detail.artistLabel.characters.first;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
       child: Column(
@@ -414,48 +429,42 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
             style: theme.textTheme.titleLarge?.copyWith(height: 1.35),
           ),
           const SizedBox(height: 14),
-          Row(
-            children: [
-              CircleAvatar(
-                radius: 18,
-                backgroundColor: theme.colorScheme.primaryContainer,
-                child: Text(
-                  initial,
-                  style: TextStyle(color: theme.colorScheme.onPrimaryContainer),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      detail.artistLabel,
-                      style: theme.textTheme.bodyLarge,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (artistUid != null)
-                      Text('UID $artistUid', style: theme.textTheme.labelSmall),
-                  ],
-                ),
-              ),
-              if (artistUid != null)
-                TextButton(
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => FilteredArtworksScreen(
-                          state: widget.state,
-                          title: detail.artistLabel,
-                          artistUid: artistUid,
+          // 整行可点：头像 / 名字 → 画师页（作品汇总 + 常用标签）
+          InkWell(
+            onTap: artistUid == null ? null : () => _openArtist(detail),
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: [
+                  ArtistAvatarView(
+                    state: widget.state,
+                    uid: artistUid,
+                    name: detail.artistLabel,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          detail.artistLabel,
+                          style: theme.textTheme.bodyLarge,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                    );
-                  },
-                  child: const Text('全部作品'),
-                ),
-            ],
+                        if (artistUid != null)
+                          Text(
+                            'UID $artistUid · 画师页',
+                            style: theme.textTheme.labelSmall,
+                          ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, size: 20),
+                ],
+              ),
+            ),
           ),
           const SizedBox(height: 12),
           Wrap(

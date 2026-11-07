@@ -492,6 +492,83 @@ class Repository {
         .toList();
   }
 
+  /// 画师页头部的汇总：一条 SQL 取完计数 / 占用 / 日期，标签再一条。
+  Future<ArtistProfile> artistProfile(String uid) async {
+    final row = (await db.rawQuery(
+      'SELECT '
+      '(SELECT COUNT(DISTINCT a.pid) FROM artworks a WHERE a.artist_uid = ?) AS artworks, '
+      '(SELECT COUNT(*) FROM artworks a WHERE a.artist_uid = ?) AS pages, '
+      '(SELECT COUNT(DISTINCT im.pid) FROM images im '
+      '  JOIN artworks a ON a.pid = im.pid '
+      '  WHERE a.artist_uid = ? AND im.is_favorite = 1) AS favorites, '
+      '(SELECT COALESCE(SUM(im.file_size), 0) FROM images im '
+      '  JOIN artworks a ON a.pid = im.pid WHERE a.artist_uid = ?) AS bytes, '
+      '(SELECT MIN(m.create_date) FROM illust_meta m '
+      '  JOIN artworks a ON a.pid = m.pid WHERE a.artist_uid = ?) AS first_date, '
+      '(SELECT MAX(m.create_date) FROM illust_meta m '
+      '  JOIN artworks a ON a.pid = m.pid WHERE a.artist_uid = ?) AS last_date, '
+      '(SELECT name FROM artists WHERE uid = ?) AS artist_name, '
+      '(SELECT artist_name FROM illust_meta WHERE artist_uid = ? '
+      '  AND artist_name IS NOT NULL AND artist_name != "" LIMIT 1) AS meta_name, '
+      '(SELECT artist_account FROM illust_meta WHERE artist_uid = ? '
+      '  AND artist_account IS NOT NULL AND artist_account != "" LIMIT 1) AS meta_account',
+      [uid, uid, uid, uid, uid, uid, uid, uid, uid],
+    ))
+        .first;
+    final tags = await db.rawQuery(
+      'SELECT tag, COUNT(*) c FROM illust_tags '
+      'WHERE pid IN (SELECT pid FROM artworks WHERE artist_uid = ?) '
+      'GROUP BY tag ORDER BY c DESC LIMIT 8',
+      [uid],
+    );
+    String? text(String key) {
+      final value = (row[key] as String?)?.trim();
+      return (value == null || value.isEmpty) ? null : value;
+    }
+
+    return ArtistProfile(
+      uid: uid,
+      name: text('artist_name') ?? text('meta_name') ?? '',
+      account: text('meta_account'),
+      artworks: (row['artworks'] as int?) ?? 0,
+      pages: (row['pages'] as int?) ?? 0,
+      favorites: (row['favorites'] as int?) ?? 0,
+      bytes: (row['bytes'] as num?)?.toInt() ?? 0,
+      firstDate: text('first_date'),
+      lastDate: text('last_date'),
+      topTags: tags.map((r) => r['tag'] as String).toList(),
+    );
+  }
+
+  /// 这批 PID 里本机已有的是哪些（画师页比对线上清单用）。
+  /// 分块查询：SQLite 的变量上限是 999，线上画师可能有几千个作品。
+  Future<Set<String>> existingPids(Iterable<String> pids) async {
+    final all = pids.toList(growable: false);
+    final found = <String>{};
+    for (var start = 0; start < all.length; start += 500) {
+      final chunk = all.sublist(start, (start + 500).clamp(0, all.length));
+      if (chunk.isEmpty) continue;
+      final placeholders = List.filled(chunk.length, '?').join(',');
+      final rows = await db.rawQuery(
+        'SELECT DISTINCT pid FROM artworks WHERE pid IN ($placeholders)',
+        chunk,
+      );
+      found.addAll(rows.map((r) => r['pid'] as String));
+    }
+    return found;
+  }
+
+  /// 有作品的画师 uid，按作品数从多到少 —— 补头像时先补作品多的画师，
+  /// 中途停止也不亏。补头像用（头像文件在应用目录里，不在库里）。
+  Future<List<String>> artistUidsWithArtworks() async {
+    final rows = await db.rawQuery(
+      'SELECT artist_uid, COUNT(*) c FROM artworks '
+      'WHERE artist_uid IS NOT NULL AND artist_uid != "" '
+      'GROUP BY artist_uid ORDER BY c DESC',
+    );
+    return rows.map((r) => r['artist_uid'] as String).toList();
+  }
+
   /// 标签维度计数。同样不截断：31k 行 illust_tags 的 GROUP BY 有 idx_illust_tags_tag
   /// 撑着，手机上也只要几十毫秒。
   Future<List<TagCount>> tagCounts({int? limit}) async {

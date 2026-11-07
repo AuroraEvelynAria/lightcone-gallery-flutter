@@ -156,6 +156,71 @@ class TagCount {
   final int count;
 }
 
+/// 画师页头部的汇总（一行 SQL 取完，画师页专用）。
+class ArtistProfile {
+  ArtistProfile({
+    required this.uid,
+    required this.name,
+    this.account,
+    required this.artworks,
+    required this.pages,
+    required this.favorites,
+    required this.bytes,
+    this.firstDate,
+    this.lastDate,
+    this.topTags = const [],
+  });
+
+  final String uid;
+  final String name;
+
+  /// Pixiv 的 @ 句柄（可能没有）。
+  final String? account;
+
+  /// 作品数（按 PID 去重）/ 总页数。
+  final int artworks;
+  final int pages;
+
+  /// 收藏过的作品数（任一页收藏即算）。
+  final int favorites;
+
+  /// 本机这些页的文件总大小。
+  final int bytes;
+
+  /// Pixiv 上传日期（`create_date`，取最早 / 最晚）。
+  final String? firstDate;
+  final String? lastDate;
+
+  /// 该画师作品里出现最多的标签（最多 8 个）。
+  final List<String> topTags;
+
+  String get displayName {
+    final trimmed = name.trim();
+    return trimmed.isEmpty ? 'UID $uid' : trimmed;
+  }
+
+  /// `2019-03-21T12:00:00+09:00` → `2019-03-21`。
+  String? get firstDay => _day(firstDate);
+  String? get lastDay => _day(lastDate);
+
+  static String? _day(String? raw) =>
+      (raw != null && raw.length >= 10) ? raw.substring(0, 10) : null;
+}
+
+/// 人类可读的文件大小（画师页的「占用」）。
+String formatBytes(int bytes) {
+  if (bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var value = bytes.toDouble();
+  var unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  final digits = unit == 0 || value >= 100 ? 0 : (value >= 10 ? 1 : 2);
+  return '${value.toStringAsFixed(digits)} ${units[unit]}';
+}
+
 class TagGalleryRow {
   TagGalleryRow({
     required this.id,

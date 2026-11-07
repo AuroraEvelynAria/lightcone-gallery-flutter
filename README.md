@@ -23,6 +23,11 @@
 - **沉浸式详情**：图片顶到状态栏，顶栏只有浮动的返回 / 分享 / 菜单（pixez 同款，
   不压标题与整条黑罩），标题与画师在图片下方；底部常驻收藏 / 在 Pixiv 打开
 - **收藏 · 评分 · 标签画廊 · 多选批量操作**
+- **画师页**：点头像 / 画师名进入 —— 头部是本地汇总（作品 / 页 / 收藏 / 占用 /
+  上传跨度 / 常用标签），下面是这个画师的作品瀑布流；有网上作品清单时再显示
+  「本机 N / 线上 M」和「只看缺的」，缺的排占位卡跳 Pixiv（图源仍只认本机索引）
+- **画师头像**：补全元数据后接着按画师补头像（已有就跳过，全增量），打开详情
+  时也会按需补；没网 / 没代理时显首字母
 - **分享 · 设为壁纸**：详情页可把整组图一次分享（多页走 `ACTION_SEND_MULTIPLE`），
   检视器分享当前一张；分享走 `FileProvider`，不暴露真实路径。聊天软件默认会压缩
   图片，所以另给了「以文件分享（不压缩）」和「保存原图到相册（Pictures/LightCone）」。
@@ -65,11 +70,14 @@ lib/
     media_channel.dart         原生通道（枚举 / 缩略图 / 权限 / 选备份）
     thumbnail_provider.dart    系统缩略图 ImageProvider
   pixiv/pixiv_client.dart      免 OAuth ajax 端点 + 代理 + 桌面同款限流语义
+  pixiv/artist_avatar.dart     画师头像：/ajax/user/{uid} 拉取、本地缓存、失败冷却
   ui/
     splash_screen.dart         开屏（光锥标记 + 淡入）
     settings_screen.dart       设置：外观 / 数据 / 网络 / 关于
     artwork_detail_screen.dart 作品详情（pixez 层级：大图翻页 / 标题 / 画师 / 标签 / 收藏）
     page_stage.dart            长图一页的版面（横页舞台 / 模糊底 / 顶栏让位，可单测）
+    artist_screen.dart         画师页：本地汇总头部 + 画师作品瀑布流
+    artist_avatar_view.dart    画师头像（缓存优先，详情页可后台按需拉）
     filtered_artworks_screen.dart 画师 / 标签筛选后的瀑布流
     brand.dart                 光锥标记的 CustomPainter（开屏与关于共用）
     ...                        四 tab + 检视器 + 补全面板
@@ -142,6 +150,21 @@ android/app/src/main/res/drawable/ic_lightcone*.xml
 - **检视器双击缩放**：横图默认整张显示（铺满宽度），双击在「整张」和
   「铺满屏高」之间切换（3.5:1 约 7.7 倍），放大后左右拖动看细节；横图底部有
   「双击切换大小 · 拖动查看」提示。竖图双击给 2 倍，比例未知也按 2 倍。
+- **画师页**（`ui/artist_screen.dart`）：详情页的画师行（头像 + 名字）和分类页
+  的画师条目都进这里。头部 `artistProfile()` 一条 SQL 取作品/页/收藏/占用 +
+  `illust_meta` 的最早/最晚上传日期，再加 `illust_tags` 出现最多的 8 个标签
+  （可点，跳标签筛选）；下面复用作品库的 `SliverMasonryGrid` 瀑布流。
+  **图源仍然只有本机索引** —— Pixez 下载到 `Pictures/pixez` 的才算，画师页不
+  联网补全；右上角「在 Pixiv 打开画师页」只是跳转。
+  - **线上缺口视图**（`pixiv/artist_artworks.dart`）：顺手拉一次
+    `/ajax/user/{uid}/profile/all`（`illusts` + `manga` 的 key 就是 PID），
+    缓存在 `<appSupport>/artist_artworks/<uid>.json`（7 天 TTL，失败退回旧缓存，
+    顶栏 ☁️ 可手动刷新）。与本机 `artworks` 分块比对（500 个一批，SQLite 变量
+    上限 999）后显示「本机 N / 线上 M」与「只看缺的」：缺的排成占位卡，
+    点一下去 Pixiv —— **下载还是 pixez 的事**，重扫一次就补上。
+    拉不到清单时只显示本机部分，页面照常用（不阻塞、不报错）。
+  - 分类页每行也带头像，但只显示批量补好的缓存（`fetch: false`）——
+    一屏几十行逐行联网会把 Pixiv 打爆。
 - **一个作品一张卡**：图库 / 作品库 / 搜索 / 筛选页都按 PID 归组（封面 = 最小页，
   多页作品右下角有「N」页角标）。之前的实现把 51 页拆成 51 张卡，真机上就是
   同一个角色刷满整屏。
@@ -150,6 +173,19 @@ android/app/src/main/res/drawable/ic_lightcone*.xml
 - **日期分两个**：`上传` 取 Pixiv 的 `illust_meta.create_date`（作品发布日），
   `保存` 取本地文件 `images.modified_at` 的最大值（下载到手机的时间）。两者分开
   显示，元数据还没补的作品就只显示保存时间。
+- **画师头像**（`pixiv/artist_avatar.dart`）：详情页先找
+  `<appSupport>/artist_avatars/<uid>.img`，没有或超过 30 天才联网；
+  `/ajax/user/{uid}?full=1` 返回的 `imageBig` / `image` 必须是 `i.pximg.net` 的
+  https 地址（响应是外部数据，不拿它当任意 URL 下载器），走同一个 `pixiv_proxy`；
+  下载先走原地址重试 2 次，再试同一路径的 `i-cf.pximg.net`（某些代理节点对
+  `i.pximg.net` 会直接断握手）。
+  - **批量补**：「补全 Pixiv 元数据」跑完作品元数据后，接着按
+    `artistUidsWithArtworks()`（作品数从多到少）补头像：
+    `<uid>.img` 存在就跳过，Pixiv 明确没有头像（或已删号）写 `<uid>.none`
+    标记下次也跳过 —— 所以**失败 / 停止都只是断点，再跑接着补**，是纯增量。
+    限流与元数据同一套：串行 800ms、连续 3 败中止、每 200 个歇 30s。
+  - **按需补**：打开作品详情时没有文件才联网，超过 30 天刷新；失败冷却 2 分钟，
+    避免没代理时每个详情页都干等 20 秒连接超时。失败 / 离线时保留首字母占位。
 - **收藏 / 评分**：作品库顶部有「收藏」筛选；详情页顶栏只有浮动图标，
   标题 / 画师 / 评分在图片下方的信息区，评分是 5 星、再点同一颗清零。两者都按
   PID 整组生效（`images` 里同一 PID 的所有页一起改）。
@@ -183,7 +219,8 @@ android/app/src/main/res/drawable/ic_lightcone*.xml
     森绿 / 琥珀 / 紫罗兰，种子色 + 对应深色底）、网格列数（自动 / 2 / 3 / 4 / 5）、
     **模糊 R-18 封面**（默认开）；
   - 数据：图片/作品/页/画师/标签/元数据/收藏计数、**图库目录与更换目录**、扫描、
-    从桌面备份合并元数据、补全元数据、导入备份、清空忽略名单；
+    从桌面备份合并元数据、补全元数据（跑完元数据接着补画师头像，全增量）、
+    导入备份、清空忽略名单；
   - 网络：Pixiv 代理（与桌面共用 `pixiv_proxy` 键）；
   - 关于：版本、schema v12、数据库路径（可长按复制）。
   偏好键为 `mobile_theme` / `mobile_theme_seed` / `mobile_grid_columns` /
@@ -254,6 +291,38 @@ Kotlin 版（`com.lightcone.gallery.android`）并存，互不覆盖数据。
    - 新增测试：`test/page_stage_test.dart`（舞台高度 / 顶栏让位 / 整块可点）、
      `test/viewer_zoom_test.dart`（铺满屏高的倍率）、
      `test/viewer_double_tap_test.dart`（双击放大与还原）。
+10. ✅ 画师头像（2026-11-08 凌晨，release 真机）：
+    - 搜 `147023216` 进详情：后台拉 `/ajax/user/95030208` 拿到 `imageBig`，
+      头像显示在画师行（36dp 圆形），首字母占位自动换掉；
+    - 本机走 Clash Meta 的 TUN（手机上 `pixiv_proxy` 是空的）。第一次
+      `i.pximg.net` 被节点的 TLS 握手掐断（Clash 日志能看到命中的台湾节点），
+      重试后拿到 62,765 字节 PNG —— 节点抽风就会这样，所以下载做成
+      「原地址重试 2 次（间隔 250ms）→ `i-cf.pximg.net`（同路径 Cloudflare
+      入口）兜底」。像素对比确认头像区从占位首字母（127 色 / std 29.5）
+      换成了真实头像（5914 色 / std 89.2）；
+    - 新增测试：`test/artist_avatar_test.dart`（字段优先级 / 只收 pximg 的
+      https / 错误信封）。
+    - 增量批量：设置 →「补全 Pixiv 元数据」跑完元数据后自动接头像阶段。
+      本机 1,609 个有作品的画师里先补了 95 个、停两次再跑，进度从
+      `4/1539`、`n/1525` 接着走（跳过的 83 个就是已补的），确认是断点续传。
+11. ✅ 画师页（2026-11-08 凌晨，release 真机）：
+    - 详情页画师行（头像 + 名字 + `UID … · 画师页` + `›`）整行可点，
+      分类页画师条目也进同一页；
+    - `火柴蝎Msc`（17 作品 / 23 页 / 1 收藏 / 620 MB / 2025-02-10 ~ 2026-10-02）、
+      `逆流茶会`（583 作品 / 991 页 / 10.6 GB / 2020-03-20 ~ 2026-10-03）头部
+      数字与桌面库手查一致（`python sqlite3` 直接对过同一批 SQL）；
+    - 头像取自批量补的缓存，分类页首屏能看到真实头像（没补的显首字母）；
+    - 新增测试：`test/artist_profile_test.dart`（`formatBytes` 进位 /
+      名字回退 / 日期截断）。
+12. ✅ 画师页线上缺口（2026-11-08，release 真机）：
+    - 画师页顺手拉 `/ajax/user/{uid}/profile/all`，缓存在
+      `<appSupport>/artist_artworks/<uid>.json`；比对本机 PID 后显示
+      「本机 N / 线上 M」+「只看缺的 M」筛选，缺的排占位卡点跳 Pixiv；
+    - 真机验证时主人手机的 Clash 已经退出（`tun0` 消失、`pixiv.net` 解析到
+      真实 IP 但 100% 丢包），两次连接都 20s 超时 —— 页面如期退回本机部分并
+      显示「拉不到线上清单（检查代理 / 网络）」，没有卡住或崩；
+    - 新增测试：`test/artist_artworks_test.dart`（插画+漫画合并、PID 去重降序、
+      错误信封 / 非数字 key）。
 
 `dumpsys gfxinfo` 对 Flutter 无效（引擎自绘，报 0 帧），要用 SurfaceFlinger/
 录屏方式量。

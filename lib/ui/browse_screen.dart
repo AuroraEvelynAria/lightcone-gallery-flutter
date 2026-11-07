@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../data/models.dart';
 import '../state/app_state.dart';
+import 'artist_avatar_view.dart';
+import 'artist_screen.dart';
 import 'filtered_artworks_screen.dart';
 
 /// 分类：画师 / 标签两个维度，按作品数排序。点进去是筛选后的作品瀑布流。
@@ -175,14 +177,18 @@ class _BrowseScreenState extends State<BrowseScreen> {
           itemBuilder: (context, index) {
             final artist = artists[index];
             return ListTile(
+              // 只显示批量补好的头像（fetch=false）：一屏几十行不能逐行联网
+              leading: ArtistAvatarView(
+                state: widget.state,
+                uid: artist.uid,
+                name: artist.name,
+                radius: 18,
+                fetch: false,
+              ),
               title: Text(artist.name),
               subtitle: Text(artist.uid),
               trailing: Text('${artist.count} 张'),
-              onTap: () => _openFiltered(
-                context,
-                title: artist.name,
-                artistUid: artist.uid,
-              ),
+              onTap: () => _openArtist(context, artist),
             );
           },
         );
@@ -246,6 +252,19 @@ class _BrowseScreenState extends State<BrowseScreen> {
           title: title,
           artistUid: artistUid,
           tags: tags,
+        ),
+      ),
+    );
+  }
+
+  /// 画师走画师页（有汇总头部），不再进裸筛选页。
+  void _openArtist(BuildContext context, ArtistCount artist) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ArtistScreen(
+          state: widget.state,
+          uid: artist.uid,
+          initialName: artist.name,
         ),
       ),
     );

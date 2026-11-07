@@ -29,6 +29,8 @@ String? avatarUrlFromUser(Object? raw) {
   return null;
 }
 
+String? _lastNetError;
+
 /// 同一个地址重试两次（第一次失败后等 250ms）：代理节点偶发掐 TLS 握手时
 /// 基本能救回来，不行再由调用方换入口。
 Future<Response<T>?> _getWithRetry<T>(
@@ -39,7 +41,8 @@ Future<Response<T>?> _getWithRetry<T>(
   for (var attempt = 0; attempt < 2; attempt++) {
     try {
       return await dio.get<T>(url, options: options);
-    } catch (_) {
+    } catch (e) {
+      _lastNetError = '$e';
       if (attempt == 0) {
         await Future<void>.delayed(const Duration(milliseconds: 250));
       }
@@ -108,6 +111,10 @@ class ArtistAvatarStore {
   static final _inflight = <String, Future<File?>>{};
   static Directory? _dir;
 
+  /// 最近一次失败的原因（给补全面板显示，别只报「失败 3」）。
+  static String? _lastError;
+  static String? get lastError => _lastError;
+
   static bool _validUid(String uid) => RegExp(r'^\d+$').hasMatch(uid);
 
   static Future<Directory> _cacheDir() async {
@@ -169,7 +176,8 @@ class ArtistAvatarStore {
 
   /// 批量补头像：按作品数从多到少，已有就跳过，可停可续（全增量）。
   ///
-  /// 与元数据补全同一套限流：串行 800ms、连续 3 败中止、每 200 个歇 30s。
+  /// 与元数据补全同一套限流：串行 800ms、每 200 个歇 30s；连续 5 个
+  /// 画师失败才停（头像有「没有头像 / 已删号」这种正常空结果，3 太容易误停）。
   static Future<AvatarSyncResult> syncAll(
     Repository repo, {
     required bool Function() watchStop,
@@ -202,9 +210,11 @@ class ArtistAvatarStore {
       }
       done = i + 1;
       onProgress?.call(done, todo.length);
-      if (consecutive >= PixivClient.maxConsecutiveFailures) {
+      if (consecutive >= 5) {
         aborted = true;
-        error = '连续 $consecutive 个画师都失败，已停';
+        final reason = (_lastError ?? '').trim();
+        error = '连续 $consecutive 个画师都失败'
+            '${reason.isEmpty ? '' : '（$reason）'}，已停';
         break;
       }
       if (i != todo.length - 1) {
@@ -300,7 +310,8 @@ class ArtistAvatarStore {
     }
 
     /// 联网失败：详情页记下时间做冷却；批量模式交给调用方算连续失败。
-    File? fail() {
+    File? fail(String reason) {
+      _lastError = reason.length > 160 ? reason.substring(0, 160) : reason;
       if (!batch) {
         _lastFailure = DateTime.now();
         _lastFailureProxy = proxy;
@@ -314,7 +325,18 @@ class ArtistAvatarStore {
         dio,
         'https://www.pixiv.net/ajax/user/$uid?full=1&lang=zh',
       );
-      if (response == null || response.statusCode != 200) return fail();
+      if (response == null) return fail(_lastNetError ?? '用户接口连接失败');
+      if (response.statusCode == 404) {
+        // 画师已删号：当作没有头像，别让它挡住后面的批次
+        await marker.writeAsString(
+          '${DateTime.now().millisecondsSinceEpoch}',
+          flush: true,
+        );
+        return null;
+      }
+      if (response.statusCode != 200) {
+        return fail('用户接口 HTTP ${response.statusCode}');
+      }
       final raw = response.data;
       final decoded = raw is Map<String, dynamic>
           ? raw
@@ -335,13 +357,21 @@ class ArtistAvatarStore {
       // 同一个地址重试一次多半就过；还不行再换 i-cf.pximg.net（同路径的
       // Cloudflare 入口）。
       List<int>? bytes;
+      String? imageError;
       for (final candidate in _candidates(url)) {
         final image = await _getWithRetry<List<int>>(
           dio,
           candidate,
           options: Options(responseType: ResponseType.bytes),
         );
-        if (image == null || image.statusCode != 200) continue;
+        if (image == null) {
+          imageError = _lastNetError ?? '头像图片连接失败';
+          continue;
+        }
+        if (image.statusCode != 200) {
+          imageError = '头像图片 HTTP ${image.statusCode}';
+          continue;
+        }
         final contentType =
             image.headers.value(Headers.contentTypeHeader) ?? '';
         final data = image.data;
@@ -349,12 +379,13 @@ class ArtistAvatarStore {
             data == null ||
             data.isEmpty ||
             data.length > _maxBytes) {
+          imageError = '头像图片格式异常（$contentType）';
           continue;
         }
         bytes = data;
         break;
       }
-      if (bytes == null) return fail();
+      if (bytes == null) return fail(imageError ?? '头像下载失败');
 
       // 先写临时文件再换名，失败时旧头像还在
       final tmp = File('${file.path}.tmp');
@@ -364,9 +395,10 @@ class ArtistAvatarStore {
       if (await marker.exists()) await marker.delete();
       _lastFailure = null;
       _lastFailureProxy = null;
+      _lastError = null;
       return file;
-    } catch (_) {
-      return fail();
+    } catch (e) {
+      return fail(_lastNetError ?? '$e');
     }
   }
 }

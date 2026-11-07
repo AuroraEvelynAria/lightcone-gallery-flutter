@@ -55,3 +55,22 @@ ImageProvider imageProviderFor(int? mediaId, String path, {int size = 320}) {
     FileImage(File(path)),
   );
 }
+
+/// 作品卡缩略图：1~2 列这种大格直接按格宽从文件降采样解码 —— 系统缩略图是
+/// 方形的，裁成 3:4 竖卡会被放大一轮；3 列以上格子小，继续走系统缩略图。
+ImageProvider cardImageProvider({
+  required int? mediaId,
+  required String path,
+  required int columns,
+  required double cellPx,
+  required int thumbSize,
+}) {
+  if (columns <= 2) {
+    return ResizeImage.resizeIfNeeded(
+      cellPx.round(),
+      null,
+      FileImage(File(path)),
+    );
+  }
+  return imageProviderFor(mediaId, path, size: thumbSize);
+}

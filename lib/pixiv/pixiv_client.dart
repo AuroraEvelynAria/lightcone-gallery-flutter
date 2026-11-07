@@ -91,12 +91,25 @@ class PixivClient {
     if (pid.isEmpty || !pid.codeUnits.every((c) => c >= 0x30 && c <= 0x39)) {
       return FetchFailed('PID 不是纯数字: $pid');
     }
-    Response<dynamic> response;
-    try {
-      response = await dio.get<dynamic>('https://www.pixiv.net/ajax/illust/$pid?lang=zh');
-    } catch (e) {
-      var reason = '请求失败: $e';
-      final text = e.toString().toLowerCase();
+    // 代理节点偶发掐 TLS 握手（和头像下载同一个毛病），重试一次再判死
+    Response<dynamic>? response;
+    Object? lastError;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        response = await dio.get<dynamic>(
+          'https://www.pixiv.net/ajax/illust/$pid?lang=zh',
+        );
+        break;
+      } catch (e) {
+        lastError = e;
+        if (attempt == 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        }
+      }
+    }
+    if (response == null) {
+      var reason = '请求失败: $lastError';
+      final text = '$lastError'.toLowerCase();
       if (text.contains('handshake') || text.contains('connection reset')) {
         reason += ' —— 代理的节点连不上 Pixiv，去代理软件里换一个节点试试';
       }

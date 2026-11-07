@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 import '../data/models.dart';
 import '../media/thumbnail_provider.dart';
 import '../state/app_settings.dart';
 import '../state/app_state.dart';
+import 'artwork_card.dart';
 import 'artwork_detail_screen.dart';
-import 'blur_thumb.dart';
-import 'page_badge.dart';
 import 'viewer_screen.dart';
 
-/// 通用图库：方格网格 + 分页。网格里只显示**系统缩略图**（见 MediaThumbnail），
-/// 原图只在检视器里解一次。
+/// 通用图库：pixez 式作品卡瀑布流 + 分页（预览 / 标题 / 画师 / 收藏心）。
+/// 网格里只显示**系统缩略图**（见 MediaThumbnail），原图只在检视器里解一次。
 class GalleryScreen extends StatefulWidget {
   const GalleryScreen({super.key, required this.state});
 
@@ -102,26 +102,10 @@ class _GalleryScreenState extends State<GalleryScreen> {
             initialPage: parsed.$2,
             heroTag: 'img-${row.id}',
             onFavoriteChanged: (favorite) {
-              if (!mounted || index >= _rows.length) return;
-              setState(() {
-                _rows[index] = ImageRow(
-                  id: row.id,
-                  libraryId: row.libraryId,
-                  path: row.path,
-                  filename: row.filename,
-                  fileSize: row.fileSize,
-                  modifiedAt: row.modifiedAt,
-                  isFavorite: favorite,
-                  rating: row.rating,
-                  width: row.width,
-                  height: row.height,
-                  pid: row.pid,
-                  artistUid: row.artistUid,
-                  mediaId: row.mediaId,
-                  pageTotal: row.pageTotal,
-                  xRestrict: row.xRestrict,
-                );
-              });
+              if (!mounted) return;
+              final at = _rows.indexWhere((r) => r.id == row.id);
+              if (at < 0) return;
+              setState(() => _rows[at] = _rows[at].copyWith(isFavorite: favorite));
             },
           ),
         ),
@@ -146,14 +130,47 @@ class _GalleryScreenState extends State<GalleryScreen> {
     );
   }
 
+  String _titleOf(ImageRow row) {
+    final title = row.title?.trim() ?? '';
+    return title.isEmpty ? row.filename : title;
+  }
+
+  String _artistOf(ImageRow row) {
+    final name = (row.artistName ?? row.artistAccount ?? '').trim();
+    if (name.isNotEmpty) return name;
+    return parseArtist(row.path)?.$2 ?? '未分类';
+  }
+
+  Future<void> _toggleFavorite(int index) async {
+    final row = _rows[index];
+    final next = !row.isFavorite;
+    setState(() => _rows[index] = row.copyWith(isFavorite: next));
+    final pid = row.pid;
+    if (pid == null) {
+      await widget.state.repo.setFavorite(row.id, next);
+      return;
+    }
+    final updated = await widget.state.repo.setPidFavorite(pid, next);
+    if (!mounted) return;
+    if (updated == 0) {
+      final at = _rows.indexWhere((r) => r.id == row.id);
+      if (at >= 0) {
+        setState(() => _rows[at] = _rows[at].copyWith(isFavorite: !next));
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('收藏失败：这张不在图库里')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final columns = AppSettingsScope.of(context).gridColumns;
     final media = MediaQuery.of(context);
     final effective = columns > 0 ? columns : (media.size.width / 120).round().clamp(2, 6);
-    // 缩略图按「每格实际像素」要：2 列时系统缩略图给到 540px，5 列只要 216px
-    final thumbSize =
-        (media.size.width * media.devicePixelRatio / effective).round().clamp(200, 640);
+    // 方形缩略图会被竖卡裁成 3:4：按长边要，别只按格宽
+    final cellPx = media.size.width * media.devicePixelRatio / effective;
+    final thumbSize = (cellPx * 1.6).round().clamp(320, 1024);
     return Column(
       children: [
         Padding(
@@ -189,58 +206,33 @@ class _GalleryScreenState extends State<GalleryScreen> {
         Expanded(
           child: _rows.isEmpty
               ? _empty()
-              : GridView.builder(
+              : MasonryGridView.count(
                   controller: _controller,
-                  padding: const EdgeInsets.all(6),
-                  // 每格上限 120dp：手机上约 3 列（设置里可固定 3/4/5 列）
-                  gridDelegate: columns > 0
-                      ? SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          mainAxisSpacing: 6,
-                          crossAxisSpacing: 6,
-                        )
-                      : const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 120,
-                          mainAxisSpacing: 6,
-                          crossAxisSpacing: 6,
-                        ),
-                  // 预渲染一屏半，快速滚动时缩略图先就位
+                  padding: const EdgeInsets.all(8),
+                  crossAxisCount: effective,
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 8,
                   itemCount: _rows.length,
                   itemBuilder: (context, index) {
                     final row = _rows[index];
-                    return _Tile(
-                      row: row,
-                      thumbSize: thumbSize,
+                    return ArtworkCard(
+                      image: cardImageProvider(
+                        mediaId: row.mediaId,
+                        path: row.path,
+                        columns: effective,
+                        cellPx: cellPx,
+                        thumbSize: thumbSize,
+                      ),
+                      aspectRatio: row.aspectRatio,
+                      title: _titleOf(row),
+                      artist: _artistOf(row),
+                      favorite: row.isFavorite,
+                      pageCount: row.pageTotal,
+                      xRestrict: row.xRestrict,
+                      heroTag: 'img-${row.id}',
                       onTap: () => _openItem(index),
-                      onLongPress: () async {
-                        // 卡片代表整个作品：收藏状态写到这个 PID 的所有页
-                        final pid = row.pid;
-                        if (pid != null) {
-                          await widget.state.repo.setPidFavorite(pid, !row.isFavorite);
-                        } else {
-                          await widget.state.repo.setFavorite(row.id, !row.isFavorite);
-                        }
-                        if (!mounted) return;
-                        setState(() {
-                          _rows[index] = ImageRow(
-                            id: row.id,
-                            libraryId: row.libraryId,
-                            path: row.path,
-                            filename: row.filename,
-                            fileSize: row.fileSize,
-                            modifiedAt: row.modifiedAt,
-                            isFavorite: !row.isFavorite,
-                            rating: row.rating,
-                            width: row.width,
-                            height: row.height,
-                            pid: row.pid,
-                            artistUid: row.artistUid,
-                            mediaId: row.mediaId,
-                            pageTotal: row.pageTotal,
-                            xRestrict: row.xRestrict,
-                          );
-                        });
-                      },
+                      onLongPress: () => _toggleFavorite(index),
+                      onFavorite: () => _toggleFavorite(index),
                     );
                   },
                 ),
@@ -269,64 +261,3 @@ class _GalleryScreenState extends State<GalleryScreen> {
   }
 }
 
-class _Tile extends StatelessWidget {
-  const _Tile({
-    required this.row,
-    required this.thumbSize,
-    required this.onTap,
-    required this.onLongPress,
-  });
-
-  final ImageRow row;
-  final int thumbSize;
-  final VoidCallback onTap;
-  final VoidCallback onLongPress;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      onLongPress: onLongPress,
-      child: Hero(
-        tag: 'img-${row.id}',
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              blurR18IfNeeded(
-                context,
-                row.xRestrict,
-                Image(
-                  image: imageProviderFor(row.mediaId, row.path, size: thumbSize),
-                  fit: BoxFit.cover,
-                  gaplessPlayback: true,
-                  errorBuilder: (_, _, _) => Container(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    child: const Icon(Icons.broken_image_outlined, size: 20),
-                  ),
-                ),
-              ),              if (row.isFavorite)
-                Positioned(
-                  right: 3,
-                  bottom: 3,
-                  child: Icon(
-                    Icons.favorite,
-                    size: 14,
-                    color: Theme.of(context).colorScheme.error,
-                    shadows: const [Shadow(blurRadius: 2, color: Colors.black54)],
-                  ),
-                ),
-              if (row.pageTotal > 1)
-                Positioned(
-                  left: 3,
-                  bottom: 3,
-                  child: PageBadge(count: row.pageTotal),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

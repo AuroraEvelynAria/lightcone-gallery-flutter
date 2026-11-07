@@ -285,7 +285,9 @@ class Repository {
     args.addAll([limit, offset]);
     final rows = await db.rawQuery(
       'SELECT i.*, m.media_id AS media_id, g.n AS page_total, g.fav AS group_fav, '
-      'COALESCE(meta.x_restrict, 0) AS x_restrict '
+      'COALESCE(meta.x_restrict, 0) AS x_restrict, '
+      'meta.title AS title, meta.artist_name AS artist_name, '
+      'meta.artist_account AS artist_account '
       'FROM images i '
       'JOIN ('
       '  SELECT COALESCE(pid, \'#\' || id) AS k, MIN(id) AS cover_id, '
@@ -359,7 +361,8 @@ class Repository {
       'SELECT a.*, meta.title AS title, meta.artist_name AS artist_name, '
       'meta.artist_account AS artist_account, meta.page_count AS page_count, '
       'meta.x_restrict AS x_restrict, m.media_id AS media_id, '
-      '(SELECT COUNT(*) FROM artworks a2 WHERE a2.pid = a.pid) AS page_total '
+      '(SELECT COUNT(*) FROM artworks a2 WHERE a2.pid = a.pid) AS page_total, '
+      'EXISTS (SELECT 1 FROM images im WHERE im.pid = a.pid AND im.is_favorite = 1) AS is_favorite '
       'FROM artworks a '
       'JOIN (SELECT pid, MIN(page) AS page FROM artworks GROUP BY pid) cover '
       '  ON cover.pid = a.pid AND cover.page = a.page '
@@ -637,7 +640,8 @@ class Repository {
       "SELECT a.*, meta.title AS title, meta.artist_name AS artist_name, "
       "meta.artist_account AS artist_account, meta.page_count AS page_count, "
       "meta.x_restrict AS x_restrict, m.media_id AS media_id, "
-      "(SELECT COUNT(*) FROM artworks a2 WHERE a2.pid = a.pid) AS page_total "
+      "(SELECT COUNT(*) FROM artworks a2 WHERE a2.pid = a.pid) AS page_total, "
+      "EXISTS (SELECT 1 FROM images im WHERE im.pid = a.pid AND im.is_favorite = 1) AS is_favorite "
       "FROM artworks a "
       "JOIN (SELECT pid, MIN(page) AS page FROM artworks GROUP BY pid) cover "
       "  ON cover.pid = a.pid AND cover.page = a.page "
@@ -658,7 +662,9 @@ class Repository {
     // 按 PID 归组：搜到「各种各样娅」时只出一张卡，而不是 51 页
     final rows = await db.rawQuery(
       "SELECT i.*, m.media_id AS media_id, g.n AS page_total, g.fav AS group_fav, "
-      "COALESCE(meta.x_restrict, 0) AS x_restrict "
+      "COALESCE(meta.x_restrict, 0) AS x_restrict, "
+      "meta.title AS title, meta.artist_name AS artist_name, "
+      "meta.artist_account AS artist_account "
       "FROM images i "
       "JOIN ("
       "  SELECT COALESCE(pid, '#' || id) AS k, MIN(id) AS cover_id, "
@@ -1031,6 +1037,9 @@ class Repository {
         mediaId: r['media_id'] as int?,
         pageTotal: (r['page_total'] as int?) ?? 1,
         xRestrict: (r['x_restrict'] as int?) ?? 0,
+        title: r['title'] as String?,
+        artistName: r['artist_name'] as String?,
+        artistAccount: r['artist_account'] as String?,
       );
 
   ArtworkRow _artworkRow(Map<String, Object?> r) => ArtworkRow(
@@ -1047,5 +1056,6 @@ class Repository {
         xRestrict: r['x_restrict'] as int?,
         mediaId: r['media_id'] as int?,
         pageTotal: (r['page_total'] as int?) ?? 1,
+        favorite: ((r['is_favorite'] as int?) ?? 0) == 1,
       );
 }

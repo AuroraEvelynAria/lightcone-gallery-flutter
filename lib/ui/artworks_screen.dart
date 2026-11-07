@@ -5,9 +5,8 @@ import '../data/models.dart';
 import '../media/thumbnail_provider.dart';
 import '../state/app_settings.dart';
 import '../state/app_state.dart';
+import 'artwork_card.dart';
 import 'artwork_detail_screen.dart';
-import 'blur_thumb.dart';
-import 'page_badge.dart';
 
 /// 作品库：瀑布流（每格高度 = 列宽 × 原图高宽比）。缩略图仍走系统缩略图，
 /// 比例来自 MediaStore 的 WIDTH/HEIGHT，所以布局不跳、滚动不卡。
@@ -97,9 +96,40 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
           pid: row.pid,
           initialPage: row.page,
           heroTag: 'art-${row.id}',
+          onFavoriteChanged: (favorite) {
+            if (!mounted) return;
+            final at = _rows.indexWhere((r) => r.id == row.id);
+            if (at >= 0) setState(() => _rows[at] = _rows[at].copyWith(favorite: favorite));
+          },
         ),
       ),
     );
+  }
+
+  String _titleOf(ArtworkRow row) {
+    final title = row.title?.trim() ?? '';
+    return title.isEmpty ? 'PID ${row.pid}' : title;
+  }
+
+  String _artistOf(ArtworkRow row) {
+    final name = (row.artistName ?? row.artistAccount ?? '').trim();
+    if (name.isNotEmpty) return name;
+    return parseArtist(row.originalPath)?.$2 ?? '未知画师';
+  }
+
+  Future<void> _toggleFavorite(int index) async {
+    final row = _rows[index];
+    final next = !row.favorite;
+    setState(() => _rows[index] = row.copyWith(favorite: next));
+    final updated = await widget.state.repo.setPidFavorite(row.pid, next);
+    if (!mounted) return;
+    if (updated == 0) {
+      final at = _rows.indexWhere((r) => r.id == row.id);
+      if (at >= 0) setState(() => _rows[at] = _rows[at].copyWith(favorite: !next));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('这张不在图库里，收藏只对图库图片生效')),
+      );
+    }
   }
 
   /// 长按进入多选；再点卡片是勾选/取消，不打开详情。
@@ -259,21 +289,36 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
             ? preferred
             : (constraints.maxWidth / 120).round().clamp(2, 6);
         final media = MediaQuery.of(context);
-        // 缩略图按每格实际像素要，别让 2 列模式放大 320px 的糊图
-        final thumbSize = (media.size.width * media.devicePixelRatio / columns)
-            .round()
-            .clamp(200, 640);
+        // 方形系统缩略图会被竖卡裁成 3:4 —— 请求长边而不是格宽，否则看着糊
+        final cellPx = media.size.width * media.devicePixelRatio / columns;
+        final thumbSize = (cellPx * 1.6).round().clamp(320, 1024);
         return MasonryGridView.count(
           controller: _controller,
-          padding: const EdgeInsets.all(6),
+          padding: const EdgeInsets.all(8),
           crossAxisCount: columns,
-          mainAxisSpacing: 6,
-          crossAxisSpacing: 6,
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
           itemCount: _rows.length,
           itemBuilder: (context, index) {
             final row = _rows[index];
             final selected = _selected.contains(row.id);
-            return GestureDetector(
+            return ArtworkCard(
+              image: cardImageProvider(
+                mediaId: row.mediaId,
+                path: row.originalPath,
+                columns: columns,
+                cellPx: cellPx,
+                thumbSize: thumbSize,
+              ),
+              aspectRatio: row.aspectRatio,
+              title: _titleOf(row),
+              artist: _artistOf(row),
+              favorite: row.favorite,
+              pageCount: row.pageTotal,
+              xRestrict: row.xRestrict ?? 0,
+              heroTag: 'art-${row.id}',
+              selected: selected,
+              selectionMode: _selecting,
               onTap: () {
                 if (_selecting) {
                   _toggleSelect(row);
@@ -288,56 +333,7 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
                   _startSelect(row);
                 }
               },
-              child: Hero(
-                tag: 'art-${row.id}',
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: AspectRatio(
-                    aspectRatio: row.aspectRatio,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        blurR18IfNeeded(
-                          context,
-                          row.xRestrict ?? 0,
-                          Image(
-                            image: imageProviderFor(row.mediaId, row.originalPath, size: thumbSize),
-                            fit: BoxFit.cover,
-                            gaplessPlayback: true,
-                            errorBuilder: (_, _, _) => Container(
-                              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                              child: const Icon(Icons.broken_image_outlined, size: 20),
-                            ),
-                          ),
-                        ),
-                        if (row.pageTotal > 1)
-                          Positioned(
-                            right: 4,
-                            bottom: 4,
-                            child: PageBadge(count: row.pageTotal),
-                          ),
-                        // 多选：整格压暗，选中的右上角打勾
-                        if (_selecting)
-                          Positioned.fill(
-                            child: ColoredBox(
-                              color: selected ? Colors.black45 : Colors.black26,
-                            ),
-                          ),
-                        if (_selecting && selected)
-                          const Positioned(
-                            right: 5,
-                            top: 5,
-                            child: Icon(
-                              Icons.check_circle,
-                              size: 22,
-                              color: Colors.white,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+              onFavorite: () => _toggleFavorite(index),
             );
           },
         );

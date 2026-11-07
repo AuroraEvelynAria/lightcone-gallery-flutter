@@ -10,10 +10,9 @@ import '../pixiv/artist_artworks.dart';
 import '../state/app_settings.dart';
 import '../state/app_state.dart';
 import 'artist_avatar_view.dart';
+import 'artwork_card.dart';
 import 'artwork_detail_screen.dart';
-import 'blur_thumb.dart';
 import 'filtered_artworks_screen.dart';
-import 'page_badge.dart';
 
 /// 画师页：头部是本地汇总（头像 / 名字 / 作品数 / 页数 / 收藏 / 占用 /
 /// 上传跨度 / 常用标签），下面是这个画师的作品瀑布流。
@@ -149,8 +148,40 @@ class _ArtistScreenState extends State<ArtistScreen> {
           pid: row.pid,
           initialPage: row.page,
           heroTag: 'artist-${row.id}',
+          onFavoriteChanged: (favorite) {
+            if (!mounted) return;
+            final at = _rows.indexWhere((r) => r.id == row.id);
+            if (at >= 0) setState(() => _rows[at] = _rows[at].copyWith(favorite: favorite));
+          },
         ),
       ),
+    );
+  }
+
+  String _titleOf(ArtworkRow row) {
+    final title = row.title?.trim() ?? '';
+    return title.isEmpty ? 'PID ${row.pid}' : title;
+  }
+
+  String _artistOf(ArtworkRow row) {
+    final name = (row.artistName ?? row.artistAccount ?? '').trim();
+    if (name.isNotEmpty) return name;
+    return parseArtist(row.originalPath)?.$2 ?? '未知画师';
+  }
+
+  Future<void> _toggleFavorite(ArtworkRow row) async {
+    final at = _rows.indexWhere((r) => r.id == row.id);
+    if (at < 0) return;
+    final next = !row.favorite;
+    setState(() => _rows[at] = row.copyWith(favorite: next));
+    final updated = await widget.state.repo.setPidFavorite(row.pid, next);
+    if (!mounted || updated > 0) return;
+    final back = _rows.indexWhere((r) => r.id == row.id);
+    if (back >= 0) {
+      setState(() => _rows[back] = _rows[back].copyWith(favorite: !next));
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('这张不在图库里，收藏只对图库图片生效')),
     );
   }
 
@@ -206,10 +237,8 @@ class _ArtistScreenState extends State<ArtistScreen> {
                     ? preferred
                     : (constraints.maxWidth / 120).round().clamp(2, 6);
                 final media = MediaQuery.of(context);
-                final thumbSize =
-                    (media.size.width * media.devicePixelRatio / columns)
-                        .round()
-                        .clamp(200, 640);
+                final cellPx = media.size.width * media.devicePixelRatio / columns;
+                final thumbSize = (cellPx * 1.6).round().clamp(320, 1024);
                 return CustomScrollView(
                   controller: _controller,
                   slivers: [
@@ -217,17 +246,22 @@ class _ArtistScreenState extends State<ArtistScreen> {
                     if (_gapOnly)
                       _gapSliver(context, columns)
                     else
-                      SliverPadding(
-                        padding: const EdgeInsets.fromLTRB(6, 6, 6, 24),
-                        sliver: SliverMasonryGrid.count(
-                          crossAxisCount: columns,
-                          mainAxisSpacing: 6,
-                          crossAxisSpacing: 6,
-                          childCount: _rows.length,
-                          itemBuilder: (context, index) =>
-                              _tile(context, _rows[index], thumbSize),
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
+                      sliver: SliverMasonryGrid.count(
+                        crossAxisCount: columns,
+                        mainAxisSpacing: 8,
+                        crossAxisSpacing: 8,
+                        childCount: _rows.length,
+                        itemBuilder: (context, index) => _tile(
+                          context,
+                          _rows[index],
+                          thumbSize,
+                          columns,
+                          cellPx,
                         ),
                       ),
+                    ),
                   ],
                 );
               },
@@ -445,47 +479,30 @@ class _ArtistScreenState extends State<ArtistScreen> {
     );
   }
 
-  Widget _tile(BuildContext context, ArtworkRow row, int thumbSize) {
-    return GestureDetector(
-      onTap: () => _openDetail(row),
-      child: Hero(
-        tag: 'artist-${row.id}',
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: AspectRatio(
-            aspectRatio: row.aspectRatio,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                blurR18IfNeeded(
-                  context,
-                  row.xRestrict ?? 0,
-                  Image(
-                    image: imageProviderFor(
-                      row.mediaId,
-                      row.originalPath,
-                      size: thumbSize,
-                    ),
-                    fit: BoxFit.cover,
-                    gaplessPlayback: true,
-                    errorBuilder: (_, _, _) => Container(
-                      color:
-                          Theme.of(context).colorScheme.surfaceContainerHighest,
-                      child: const Icon(Icons.broken_image_outlined, size: 20),
-                    ),
-                  ),
-                ),
-                if (row.pageTotal > 1)
-                  Positioned(
-                    right: 4,
-                    bottom: 4,
-                    child: PageBadge(count: row.pageTotal),
-                  ),
-              ],
-            ),
-          ),
-        ),
+  Widget _tile(
+    BuildContext context,
+    ArtworkRow row,
+    int thumbSize,
+    int columns,
+    double cellPx,
+  ) {
+    return ArtworkCard(
+      image: cardImageProvider(
+        mediaId: row.mediaId,
+        path: row.originalPath,
+        columns: columns,
+        cellPx: cellPx,
+        thumbSize: thumbSize,
       ),
+      aspectRatio: row.aspectRatio,
+      title: _titleOf(row),
+      artist: _artistOf(row),
+      favorite: row.favorite,
+      pageCount: row.pageTotal,
+      xRestrict: row.xRestrict ?? 0,
+      heroTag: 'artist-${row.id}',
+      onTap: () => _openDetail(row),
+      onFavorite: () => _toggleFavorite(row),
     );
   }
 }

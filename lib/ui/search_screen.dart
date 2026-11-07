@@ -7,6 +7,7 @@ import '../data/models.dart';
 import '../media/thumbnail_provider.dart';
 import '../state/app_settings.dart';
 import '../state/app_state.dart';
+import 'artwork_card.dart';
 import 'artwork_detail_screen.dart';
 import 'blur_thumb.dart';
 import 'page_badge.dart';
@@ -135,6 +136,53 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
+  String _titleOf(ArtworkRow row) {
+    final title = row.title?.trim() ?? '';
+    return title.isEmpty ? 'PID ${row.pid}' : title;
+  }
+
+  String _artistOf(ArtworkRow row) {
+    final name = (row.artistName ?? row.artistAccount ?? '').trim();
+    if (name.isNotEmpty) return name;
+    return parseArtist(row.originalPath)?.$2 ?? '未知画师';
+  }
+
+  void _openArtwork(ArtworkRow row) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ArtworkDetailScreen(
+          state: widget.state,
+          pid: row.pid,
+          initialPage: row.page,
+          heroTag: 'search-${row.id}',
+          onFavoriteChanged: (favorite) {
+            if (!mounted) return;
+            final at = _artworks.indexWhere((r) => r.id == row.id);
+            if (at >= 0) {
+              setState(() => _artworks[at] = _artworks[at].copyWith(favorite: favorite));
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggleArtworkFavorite(ArtworkRow row) async {
+    final at = _artworks.indexWhere((r) => r.id == row.id);
+    if (at < 0) return;
+    final next = !row.favorite;
+    setState(() => _artworks[at] = row.copyWith(favorite: next));
+    final updated = await widget.state.repo.setPidFavorite(row.pid, next);
+    if (!mounted || updated > 0) return;
+    final back = _artworks.indexWhere((r) => r.id == row.id);
+    if (back >= 0) {
+      setState(() => _artworks[back] = _artworks[back].copyWith(favorite: !next));
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('这张不在图库里，收藏只对图库图片生效')),
+    );
+  }
+
   Widget _artworkResults() {
     if (_artworks.isEmpty) return const Center(child: Text('作品没有匹配结果'));
     return LayoutBuilder(
@@ -144,56 +192,33 @@ class _SearchScreenState extends State<SearchScreen> {
             ? preferred
             : (constraints.maxWidth / 120).round().clamp(2, 6);
         final media = MediaQuery.of(context);
-        final thumbSize =
-            (media.size.width * media.devicePixelRatio / columns).round().clamp(200, 640);
+        final cellPx = media.size.width * media.devicePixelRatio / columns;
+        final thumbSize = (cellPx * 1.6).round().clamp(320, 1024);
         return MasonryGridView.count(
-          padding: const EdgeInsets.all(6),
+          padding: const EdgeInsets.all(8),
           crossAxisCount: columns,
-          mainAxisSpacing: 6,
-          crossAxisSpacing: 6,
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
           itemCount: _artworks.length,
           itemBuilder: (context, index) {
             final row = _artworks[index];
-            return GestureDetector(
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => ArtworkDetailScreen(
-                    state: widget.state,
-                    pid: row.pid,
-                    initialPage: row.page,
-                    heroTag: 'search-${row.id}',
-                  ),
-                ),
+            return ArtworkCard(
+              image: cardImageProvider(
+                mediaId: row.mediaId,
+                path: row.originalPath,
+                columns: columns,
+                cellPx: cellPx,
+                thumbSize: thumbSize,
               ),
-              child: Hero(
-                tag: 'search-${row.id}',
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: AspectRatio(
-                    aspectRatio: row.aspectRatio,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        blurR18IfNeeded(
-                          context,
-                          row.xRestrict ?? 0,
-                          Image(
-                            image: imageProviderFor(row.mediaId, row.originalPath, size: thumbSize),
-                            fit: BoxFit.cover,
-                            gaplessPlayback: true,
-                          ),
-                        ),
-                        if (row.pageTotal > 1)
-                          Positioned(
-                            right: 4,
-                            bottom: 4,
-                            child: PageBadge(count: row.pageTotal),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+              aspectRatio: row.aspectRatio,
+              title: _titleOf(row),
+              artist: _artistOf(row),
+              favorite: row.favorite,
+              pageCount: row.pageTotal,
+              xRestrict: row.xRestrict ?? 0,
+              heroTag: 'search-${row.id}',
+              onTap: () => _openArtwork(row),
+              onFavorite: () => _toggleArtworkFavorite(row),
             );
           },
         );

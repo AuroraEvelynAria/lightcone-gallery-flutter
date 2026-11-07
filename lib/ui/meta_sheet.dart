@@ -127,7 +127,13 @@ class _MetaSheetState extends State<_MetaSheet> {
       final summary = StringBuffer('头像：新补 ${avatars.fetched} · '
           '跳过已有 ${avatars.skipped}');
       if (avatars.none > 0) summary.write(' · 无头像 ${avatars.none}');
-      if (avatars.failed > 0) summary.write(' · 失败 ${avatars.failed}');
+      if (avatars.failed > 0) {
+        summary.write(' · 失败 ${avatars.failed}');
+        final reason = ArtistAvatarStore.lastError;
+        if (!avatars.aborted && reason != null && reason.isNotEmpty) {
+          summary.write('（最近：$reason）');
+        }
+      }
       if (avatars.stopped) summary.write(' · 已停止');
       if (avatars.aborted) summary.write(' · ${avatars.error}');
       setState(() => _message = '$result\n$summary');

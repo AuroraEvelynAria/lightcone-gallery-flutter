@@ -28,6 +28,9 @@ class ImageRow {
     this.mediaId,
     this.pageTotal = 1,
     this.xRestrict = 0,
+    this.title,
+    this.artistName,
+    this.artistAccount,
   });
 
   final int id;
@@ -51,6 +54,39 @@ class ImageRow {
 
   /// Pixiv 的 R-18 标记（0 = 全年龄）。网格据此决定要不要打码。
   final int xRestrict;
+
+  /// 组内作品的标题 / 画师（illust_meta；没补元数据时为 null）。
+  final String? title;
+  final String? artistName;
+  final String? artistAccount;
+
+  /// 瀑布流每格的高宽比；老行没有宽高时按 3:4 兜底。
+  double get aspectRatio {
+    final w = width, h = height;
+    if (w == null || h == null || w <= 0 || h <= 0) return 0.75;
+    return w / h;
+  }
+
+  ImageRow copyWith({bool? isFavorite}) => ImageRow(
+        id: id,
+        libraryId: libraryId,
+        path: path,
+        filename: filename,
+        fileSize: fileSize,
+        modifiedAt: modifiedAt,
+        isFavorite: isFavorite ?? this.isFavorite,
+        rating: rating,
+        width: width,
+        height: height,
+        pid: pid,
+        artistUid: artistUid,
+        mediaId: mediaId,
+        pageTotal: pageTotal,
+        xRestrict: xRestrict,
+        title: title,
+        artistName: artistName,
+        artistAccount: artistAccount,
+      );
 }
 
 class ArtworkRow {
@@ -68,6 +104,7 @@ class ArtworkRow {
     this.xRestrict,
     this.mediaId,
     this.pageTotal = 1,
+    this.favorite = false,
   });
 
   final int id;
@@ -85,6 +122,26 @@ class ArtworkRow {
 
   /// 本机实际有的页数（网格归组后由 SQL 带出）。用于「N 页」角标。
   final int pageTotal;
+
+  /// 组内任意一页收藏过 = 收藏（卡片上的心）。
+  final bool favorite;
+
+  ArtworkRow copyWith({bool? favorite}) => ArtworkRow(
+        id: id,
+        pid: pid,
+        originalPath: originalPath,
+        page: page,
+        width: width,
+        height: height,
+        title: title,
+        artistName: artistName,
+        artistAccount: artistAccount,
+        pageCount: pageCount,
+        xRestrict: xRestrict,
+        mediaId: mediaId,
+        pageTotal: pageTotal,
+        favorite: favorite ?? this.favorite,
+      );
 
   /// 瀑布流每格的高宽比：老行没有宽高时按 3:4 兜底（桌面同语义）。
   double get aspectRatio {

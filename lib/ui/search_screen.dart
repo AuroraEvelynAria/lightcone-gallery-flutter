@@ -231,7 +231,17 @@ class _SearchScreenState extends State<SearchScreen> {
               );
               return;
             }
-            final items = [ViewerItem(path: row.path, title: row.filename)];
+            final items = [
+              ViewerItem(
+                path: row.path,
+                title: row.filename,
+                aspectRatio: (row.width != null &&
+                        row.height != null &&
+                        row.height! > 0)
+                    ? row.width! / row.height!
+                    : 0,
+              ),
+            ];
             Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (_) => ViewerScreen(items: items, initialIndex: 0),

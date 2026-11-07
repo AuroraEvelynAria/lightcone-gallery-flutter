@@ -7,6 +7,7 @@ import '../data/models.dart';
 import '../media/media_channel.dart';
 import '../state/app_state.dart';
 import 'filtered_artworks_screen.dart';
+import 'page_stage.dart';
 import 'viewer_screen.dart';
 
 /// 作品详情页：pixez 的信息层级 —— 大图（可翻页）→ 标题 → 画师 → PID/页数/日期
@@ -232,6 +233,7 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
         .map((p) => ViewerItem(
               path: p.originalPath,
               title: p.title?.isNotEmpty == true ? p.title! : 'PID ${p.pid}',
+              aspectRatio: p.aspectRatio,
             ))
         .toList(growable: false);
     Navigator.of(context).push(
@@ -368,50 +370,32 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
   ///
   /// 用 SliverList 而不是把 51 张全塞进 Column：只有可视区域附近才会构建、
   /// 解码，内存不会被整本画集撑爆。
+  ///
+  /// 横页的版面在 [PageStage] 里单独算：横图只按宽度铺会变成薄薄一条，
+  /// 第一页还会整条钻到顶栏底下（点都点不到），所以横页给更高的舞台，
+  /// 第一页再把状态栏 + 工具栏的高度让出来。
   Widget _buildStrip(ArtworkDetail detail) {
     final media = MediaQuery.of(context);
     final width = media.size.width;
-    final cacheWidth = (width * media.devicePixelRatio).round();
+    // 状态栏 + 工具栏 + 8dp 呼吸位：横图第一页从这下面开始
+    final appBarBottom = media.padding.top + kToolbarHeight + 8;
     return SliverList.separated(
       itemCount: detail.pages.length,
       separatorBuilder: (_, _) => const SizedBox(height: _stripGap),
       itemBuilder: (context, index) {
         final page = detail.pages[index];
-        Widget content = SizedBox(
-          width: width,
-          height: width / page.aspectRatio,
-          child: Image(
-            image: _pageProvider(page, cacheWidth),
-            fit: BoxFit.contain,
-            gaplessPlayback: true,
-            errorBuilder: (_, _, _) => const Center(
-              child: Icon(Icons.broken_image_outlined, size: 40),
-            ),
-          ),
-        );
-        // 第一页右下角挂 R-18 角标（左上会被状态栏/返回键压住）
-        if (index == 0 && detail.xRestrict > 0) {
-          content = Stack(
-            clipBehavior: Clip.none,
-            children: [
-              content,
-              const Positioned(
-                right: 10,
-                bottom: 10,
-                child: _CounterPill(text: 'R-18', danger: true),
-              ),
-            ],
-          );
-        }
-        Widget tappable = GestureDetector(
+        return ArtworkPageTile(
+          page: page,
+          screenWidth: width,
+          screenHeight: media.size.height,
+          appBarBottom: appBarBottom,
+          first: index == 0,
+          providerFor: (cacheWidth) => _pageProvider(page, cacheWidth),
           onTap: () => _openViewer(detail, index),
-          child: content,
+          // 只让点进来的那一页参与 Hero，避免同一 PID 多页 tag 冲突
+          heroTag: index == _initialIndex ? widget.heroTag : null,
+          showR18: index == 0 && detail.xRestrict > 0,
         );
-        // 只让点进来的那一页参与 Hero，避免同一 PID 多页 tag 冲突
-        if (index == _initialIndex && widget.heroTag != null) {
-          tappable = Hero(tag: widget.heroTag!, child: tappable);
-        }
-        return tappable;
       },
     );
   }
@@ -609,28 +593,6 @@ class _MetaChip extends StatelessWidget {  const _MetaChip({required this.icon, 
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _CounterPill extends StatelessWidget {
-  const _CounterPill({required this.text, this.danger = false});
-
-  final String text;
-  final bool danger;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: danger ? const Color(0xCCB3261E) : Colors.black45,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        text,
-        style: const TextStyle(color: Colors.white, fontSize: 11),
       ),
     );
   }

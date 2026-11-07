@@ -129,7 +129,15 @@ class _GalleryScreenState extends State<GalleryScreen> {
       return;
     }
     final items = _rows
-        .map((row) => ViewerItem(path: row.path, title: row.filename))
+        .map((row) => ViewerItem(
+              path: row.path,
+              title: row.filename,
+              aspectRatio: (row.width != null &&
+                      row.height != null &&
+                      row.height! > 0)
+                  ? row.width! / row.height!
+                  : 0,
+            ))
         .toList(growable: false);
     Navigator.of(context).push(
       MaterialPageRoute<void>(

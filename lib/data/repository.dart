@@ -69,36 +69,32 @@ class Repository {
     for (final demo in demos) {
       final pid = demo.$1;
       final day = (int.parse(pid) % 9) + 1;
-      await db.insert(
-        'illust_meta',
-        {
-          'pid': pid,
-          'title': demo.$2,
-          'artist_uid': demo.$3,
-          'artist_name': demo.$4,
-          'artist_account': demo.$4.toLowerCase(),
-          'page_count': 1,
-          'x_restrict': 0,
-          'sanity_level': 0,
-          'illust_type': 0,
-          'create_date': '2026-10-${day.toString().padLeft(2, '0')}T12:00:00+00:00',
-          'fetched_at': _now(),
-          'error': null,
-          'missing': 0,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
-      await db.insert(
-        'artists',
-        {'uid': demo.$3, 'name': demo.$4, 'created_at': _now()},
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
+      await db.insert('illust_meta', {
+        'pid': pid,
+        'title': demo.$2,
+        'artist_uid': demo.$3,
+        'artist_name': demo.$4,
+        'artist_account': demo.$4.toLowerCase(),
+        'page_count': 1,
+        'x_restrict': 0,
+        'sanity_level': 0,
+        'illust_type': 0,
+        'create_date':
+            '2026-10-${day.toString().padLeft(2, '0')}T12:00:00+00:00',
+        'fetched_at': _now(),
+        'error': null,
+        'missing': 0,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await db.insert('artists', {
+        'uid': demo.$3,
+        'name': demo.$4,
+        'created_at': _now(),
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
       for (final tag in demo.$5) {
-        await db.insert(
-          'illust_tags',
-          {'pid': pid, 'tag': tag},
-          conflictAlgorithm: ConflictAlgorithm.ignore,
-        );
+        await db.insert('illust_tags', {
+          'pid': pid,
+          'tag': tag,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
     }
   }
@@ -114,7 +110,9 @@ class Repository {
   Future<Map<String, int>> importMetadataOnly(String sourcePath) async {
     final probe = await openDatabase(sourcePath, readOnly: true);
     try {
-      final tables = await probe.rawQuery("SELECT name FROM sqlite_master WHERE type = 'table'");
+      final tables = await probe.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'table'",
+      );
       final names = tables.map((r) => r['name'] as String? ?? '').toSet();
       if (!names.contains('illust_meta') || !names.contains('illust_tags')) {
         throw StateError('不是 LightCone 索引（缺 illust_meta / illust_tags）');
@@ -167,11 +165,15 @@ class Repository {
       await db.execute('DETACH DATABASE src');
     }
 
-    final total = (await db.rawQuery('SELECT COUNT(*) c FROM illust_meta')).first['c'] as int? ?? 0;
-    final favorites = (await db.rawQuery(
-      'SELECT COUNT(DISTINCT pid) c FROM images WHERE is_favorite = 1',
-    ))
-        .first['c'] as int? ??
+    final total =
+        (await db.rawQuery('SELECT COUNT(*) c FROM illust_meta')).first['c']
+            as int? ??
+        0;
+    final favorites =
+        (await db.rawQuery(
+              'SELECT COUNT(DISTINCT pid) c FROM images WHERE is_favorite = 1',
+            )).first['c']
+            as int? ??
         0;
     final pending = await pendingMetaCount();
     return {'total': total, 'pending': pending, 'favorites': favorites};
@@ -182,12 +184,14 @@ class Repository {
   Future<List<LibraryRow>> libraries() async {
     final rows = await db.query('libraries', orderBy: 'id');
     return rows
-        .map((r) => LibraryRow(
-              r['id'] as int,
-              r['path'] as String,
-              r['name'] as String,
-              r['last_scanned_at'] as int?,
-            ))
+        .map(
+          (r) => LibraryRow(
+            r['id'] as int,
+            r['path'] as String,
+            r['name'] as String,
+            r['last_scanned_at'] as int?,
+          ),
+        )
         .toList();
   }
 
@@ -197,7 +201,8 @@ class Repository {
   /// 的差集会把不在新根下的行删干净。
   Future<LibraryRow> ensurePhoneLibrary({String? name}) async {
     final root = _libraryRoot;
-    final libName = name ?? (root.split('/').last.isEmpty ? '图库' : root.split('/').last);
+    final libName =
+        name ?? (root.split('/').last.isEmpty ? '图库' : root.split('/').last);
     // 作品库与图库同口径：只收根目录下的文件。这里清掉历史遗留（别处目录
     // 下载的 pixiv 命名文件）；Windows 路径的桌面导入行不动 —— 那是等重新
     // 扫描时按 (pid,page) 更新掉的。
@@ -220,10 +225,19 @@ class Repository {
     if (existing.isNotEmpty) {
       // 新根已在：旧版整 Pictures 的库没有存在意义
       if (legacy.isNotEmpty && legacy.first['id'] != existing.first['id']) {
-        await db.delete('libraries', where: 'id = ?', whereArgs: [legacy.first['id']]);
+        await db.delete(
+          'libraries',
+          where: 'id = ?',
+          whereArgs: [legacy.first['id']],
+        );
       }
       final r = existing.first;
-      return LibraryRow(r['id'] as int, r['path'] as String, r['name'] as String, r['last_scanned_at'] as int?);
+      return LibraryRow(
+        r['id'] as int,
+        r['path'] as String,
+        r['name'] as String,
+        r['last_scanned_at'] as int?,
+      );
     }
     if (legacy.isNotEmpty) {
       final r = legacy.first;
@@ -306,23 +320,26 @@ class Repository {
   Future<int> imageCount({int? libraryId}) async {
     final result = libraryId == null
         ? await db.rawQuery('SELECT COUNT(*) c FROM images')
-        : await db.rawQuery('SELECT COUNT(*) c FROM images WHERE library_id = ?', [libraryId]);
+        : await db.rawQuery(
+            'SELECT COUNT(*) c FROM images WHERE library_id = ?',
+            [libraryId],
+          );
     return (result.first['c'] as int?) ?? 0;
   }
 
   Future<void> setFavorite(int imageId, bool favorite) => db.update(
-        'images',
-        {'is_favorite': favorite ? 1 : 0},
-        where: 'id = ?',
-        whereArgs: [imageId],
-      );
+    'images',
+    {'is_favorite': favorite ? 1 : 0},
+    where: 'id = ?',
+    whereArgs: [imageId],
+  );
 
   Future<void> setRating(int imageId, int rating) => db.update(
-        'images',
-        {'rating': rating},
-        where: 'id = ?',
-        whereArgs: [imageId],
-      );
+    'images',
+    {'rating': rating},
+    where: 'id = ?',
+    whereArgs: [imageId],
+  );
 
   // ---------------------------------------------------------------- 作品库
 
@@ -422,11 +439,11 @@ class Repository {
 
   /// 返回受影响的行数：0 = 这个 PID 不在 pixez 图库里（收藏只对图库图片生效）。
   Future<int> setPidFavorite(String pid, bool favorite) => db.update(
-        'images',
-        {'is_favorite': favorite ? 1 : 0},
-        where: 'pid = ?',
-        whereArgs: [pid],
-      );
+    'images',
+    {'is_favorite': favorite ? 1 : 0},
+    where: 'pid = ?',
+    whereArgs: [pid],
+  );
 
   /// 多选收藏：一次更新多个 PID 的所有页。
   Future<int> setPidsFavorite(List<String> pids, bool favorite) async {
@@ -442,15 +459,19 @@ class Repository {
 
   /// 评分也是整组：一个作品的所有页同一分。
   Future<int> setPidRating(String pid, int rating) => db.update(
-        'images',
-        {'rating': rating},
-        where: 'pid = ?',
-        whereArgs: [pid],
-      );
+    'images',
+    {'rating': rating},
+    where: 'pid = ?',
+    whereArgs: [pid],
+  );
 
   /// 详情页的一次性装载：元数据 + 标签 + 所有页 + 收藏/评分状态。
   Future<ArtworkDetail> artworkDetail(String pid) async {
-    final metaRows = await db.query('illust_meta', where: 'pid = ?', whereArgs: [pid]);
+    final metaRows = await db.query(
+      'illust_meta',
+      where: 'pid = ?',
+      whereArgs: [pid],
+    );
     final tagRows = await db.query(
       'illust_tags',
       where: 'pid = ?',
@@ -492,7 +513,8 @@ class Repository {
     );
   }
 
-  Future<int> artworkCount() async {    final result = await db.rawQuery('SELECT COUNT(*) c FROM artworks');
+  Future<int> artworkCount() async {
+    final result = await db.rawQuery('SELECT COUNT(*) c FROM artworks');
     return (result.first['c'] as int?) ?? 0;
   }
 
@@ -521,7 +543,13 @@ class Repository {
       limit == null ? const [] : [limit],
     );
     return rows
-        .map((r) => ArtistCount(r['uid'] as String, r['name'] as String? ?? '', r['cnt'] as int))
+        .map(
+          (r) => ArtistCount(
+            r['uid'] as String,
+            r['name'] as String? ?? '',
+            r['cnt'] as int,
+          ),
+        )
         .toList();
   }
 
@@ -546,8 +574,7 @@ class Repository {
       '(SELECT artist_account FROM illust_meta WHERE artist_uid = ? '
       '  AND artist_account IS NOT NULL AND artist_account != "" LIMIT 1) AS meta_account',
       [uid, uid, uid, uid, uid, uid, uid, uid, uid],
-    ))
-        .first;
+    )).first;
     final tags = await db.rawQuery(
       'SELECT tag, COUNT(*) c FROM illust_tags '
       'WHERE pid IN (SELECT pid FROM artworks WHERE artist_uid = ?) '
@@ -610,7 +637,9 @@ class Repository {
       '${limit == null ? '' : ' LIMIT ?'}',
       limit == null ? const [] : [limit],
     );
-    return rows.map((r) => TagCount(r['tag'] as String, r['cnt'] as int)).toList();
+    return rows
+        .map((r) => TagCount(r['tag'] as String, r['cnt'] as int))
+        .toList();
   }
 
   /// 移出作品库：删行 + 记忽略名单（重扫不再收回），语义同桌面 remove_artworks。
@@ -619,13 +648,18 @@ class Repository {
     final now = _now();
     await db.transaction((txn) async {
       for (final id in ids) {
-        final rows = await txn.query('artworks', columns: ['pid', 'page'], where: 'id = ?', whereArgs: [id]);
-        if (rows.isEmpty) continue;
-        await txn.insert(
-          'ignored_artworks',
-          {'pid': rows.first['pid'], 'page': rows.first['page'], 'created_at': now},
-          conflictAlgorithm: ConflictAlgorithm.ignore,
+        final rows = await txn.query(
+          'artworks',
+          columns: ['pid', 'page'],
+          where: 'id = ?',
+          whereArgs: [id],
         );
+        if (rows.isEmpty) continue;
+        await txn.insert('ignored_artworks', {
+          'pid': rows.first['pid'],
+          'page': rows.first['page'],
+          'created_at': now,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
         await txn.delete('artworks', where: 'id = ?', whereArgs: [id]);
       }
     });
@@ -664,7 +698,10 @@ class Repository {
   static String _escapeLike(String q) =>
       q.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
 
-  Future<List<ArtworkRow>> searchArtworks(String query, {int limit = 100}) async {
+  Future<List<ArtworkRow>> searchArtworks(
+    String query, {
+    int limit = 100,
+  }) async {
     final like = '%${_escapeLike(query.trim())}%';
     final rows = await db.rawQuery(
       "SELECT a.*, meta.title AS title, meta.artist_name AS artist_name, "
@@ -715,12 +752,18 @@ class Repository {
   /// 语义与桌面 `scan_media_rows` / Kotlin 版完全一致（保留先入者）。
   Future<ScanSummary> scanArtworks(List<MediaImageDto> rows) async {
     final now = _now();
-    final knownRows = await db.query('artworks', columns: ['pid', 'page', 'original_path']);
+    final knownRows = await db.query(
+      'artworks',
+      columns: ['pid', 'page', 'original_path'],
+    );
     final knownPaths = <String, String>{
       for (final r in knownRows)
         '${r['pid']}:${r['page']}': (r['original_path'] as String?) ?? '',
     };
-    final ignoredRows = await db.query('ignored_artworks', columns: ['pid', 'page']);
+    final ignoredRows = await db.query(
+      'ignored_artworks',
+      columns: ['pid', 'page'],
+    );
     final ignored = ignoredRows.map((r) => '${r['pid']}:${r['page']}').toSet();
 
     var matched = 0;
@@ -792,10 +835,18 @@ class Repository {
     await db.transaction((txn) async {
       final batch = txn.batch();
       for (final artist in artistRows) {
-        batch.insert('artists', artist, conflictAlgorithm: ConflictAlgorithm.ignore);
+        batch.insert(
+          'artists',
+          artist,
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
       }
       for (final artwork in artworkRows) {
-        batch.insert('artworks', artwork, conflictAlgorithm: ConflictAlgorithm.ignore);
+        batch.insert(
+          'artworks',
+          artwork,
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
       }
       for (final update in pathUpdates) {
         batch.update(
@@ -811,7 +862,10 @@ class Repository {
         );
       }
       for (final root in roots) {
-        batch.insert('artwork_roots', {'path': root, 'created_at': now}, conflictAlgorithm: ConflictAlgorithm.ignore);
+        batch.insert('artwork_roots', {
+          'path': root,
+          'created_at': now,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
       // 路径反推不出画师时，用元数据里的 artist_uid 兜底（演示图 / 用户改过目录名）
       await txn.rawUpdate(
@@ -822,17 +876,29 @@ class Repository {
       );
       // 缩略图映射：一次扫描顺带把全机 path→id 更新到最新
       for (final row in rows) {
-        batch.insert('media_ids', {'path': row.path, 'media_id': row.id},
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        batch.insert('media_ids', {
+          'path': row.path,
+          'media_id': row.id,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
       await batch.commit(noResult: true);
     });
 
-    return ScanSummary(rows.length, matched, artworkRows.length, duplicates, rows.length - matched, ignoredCount);
+    return ScanSummary(
+      rows.length,
+      matched,
+      artworkRows.length,
+      duplicates,
+      rows.length - matched,
+      ignoredCount,
+    );
   }
 
   /// 通用图库：按库根过滤 + (path,size,mtime) 增量 + 差集删除。
-  Future<ScanSummary> scanLibrary(LibraryRow library, List<MediaImageDto> allRows) async {
+  Future<ScanSummary> scanLibrary(
+    LibraryRow library,
+    List<MediaImageDto> allRows,
+  ) async {
     if (!library.path.startsWith('/')) {
       // 桌面导入的库是 Windows 路径，手机上不存在 —— 跳过不报错
       return ScanSummary(0, 0, 0, 0, 0, 0);
@@ -850,9 +916,7 @@ class Repository {
       where: 'library_id = ?',
       whereArgs: [library.id],
     );
-    final snapshot = {
-      for (final r in snapshotRows) r['path'] as String: r,
-    };
+    final snapshot = {for (final r in snapshotRows) r['path'] as String: r};
 
     final newRows = <Map<String, Object?>>[];
     final updates = <Map<String, Object?>>[];
@@ -861,7 +925,9 @@ class Repository {
 
     for (final row in rows) {
       seen.add(row.path);
-      final extension = row.name.contains('.') ? row.name.split('.').last.toLowerCase() : '';
+      final extension = row.name.contains('.')
+          ? row.name.split('.').last.toLowerCase()
+          : '';
       final existing = snapshot[row.path];
       final artist = parseArtist(row.path);
       if (existing == null) {
@@ -881,7 +947,8 @@ class Repository {
           'artist_uid': artist?.$1,
           'pid': parsePid(row.name)?.$1,
         });
-      } else if (existing['file_size'] != row.size || existing['modified_at'] != row.modified) {
+      } else if (existing['file_size'] != row.size ||
+          existing['modified_at'] != row.modified) {
         updates.add({
           'id': existing['id'],
           'width': row.width > 0 ? row.width : null,
@@ -893,12 +960,18 @@ class Repository {
         unchanged++;
       }
     }
-    final removed = snapshot.keys.where((path) => !seen.contains(path)).toList();
+    final removed = snapshot.keys
+        .where((path) => !seen.contains(path))
+        .toList();
 
     await db.transaction((txn) async {
       final batch = txn.batch();
       for (final row in newRows) {
-        batch.insert('images', row, conflictAlgorithm: ConflictAlgorithm.ignore);
+        batch.insert(
+          'images',
+          row,
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
       }
       for (final update in updates) {
         final id = update['id'];
@@ -915,13 +988,24 @@ class Repository {
         );
       }
       for (final path in removed) {
-        batch.delete('images', where: 'library_id = ? AND path = ?', whereArgs: [library.id, path]);
+        batch.delete(
+          'images',
+          where: 'library_id = ? AND path = ?',
+          whereArgs: [library.id, path],
+        );
       }
       for (final row in rows) {
-        batch.insert('media_ids', {'path': row.path, 'media_id': row.id},
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        batch.insert('media_ids', {
+          'path': row.path,
+          'media_id': row.id,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
-      batch.update('libraries', {'last_scanned_at': now}, where: 'id = ?', whereArgs: [library.id]);
+      batch.update(
+        'libraries',
+        {'last_scanned_at': now},
+        where: 'id = ?',
+        whereArgs: [library.id],
+      );
       await batch.commit(noResult: true);
     });
 
@@ -939,7 +1023,7 @@ class Repository {
 
   Future<int> pendingMetaCount() async {
     final result = await db.rawQuery(
-      'SELECT COUNT(*) c FROM artworks a WHERE NOT EXISTS ('
+      'SELECT COUNT(DISTINCT a.pid) c FROM artworks a WHERE NOT EXISTS ('
       'SELECT 1 FROM illust_meta m WHERE m.pid = a.pid AND (m.error IS NULL OR m.missing = 1))',
     );
     return (result.first['c'] as int?) ?? 0;
@@ -955,6 +1039,31 @@ class Repository {
     return rows.map((r) => r['pid'] as String).toList();
   }
 
+  /// 还没有 Pixiv AI 标记（`illust_ai` 无行）的作品数。
+  Future<int> pendingAiCount() async {
+    final result = await db.rawQuery(
+      'SELECT COUNT(DISTINCT a.pid) c FROM artworks a WHERE NOT EXISTS ('
+      'SELECT 1 FROM illust_ai ai WHERE ai.pid = a.pid)',
+    );
+    return (result.first['c'] as int?) ?? 0;
+  }
+
+  Future<List<String>> pendingAiPids(int limit) async {
+    final rows = await db.rawQuery(
+      'SELECT DISTINCT a.pid FROM artworks a WHERE NOT EXISTS ('
+      'SELECT 1 FROM illust_ai ai WHERE ai.pid = a.pid) '
+      'ORDER BY CAST(a.pid AS INTEGER) DESC LIMIT ?',
+      [limit],
+    );
+    return rows.map((r) => r['pid'] as String).toList();
+  }
+
+  /// 只写 AI 标记，不动标题/标签 —— 回填老元数据专用。
+  Future<void> storeAiType(String pid, int aiType) => db.insert('illust_ai', {
+    'pid': pid,
+    'ai_type': aiType,
+  }, conflictAlgorithm: ConflictAlgorithm.replace);
+
   /// 设置页的数据概览：一条 SQL 取全部计数。
   Future<GalleryStats> stats() async {
     final row = (await db.rawQuery(
@@ -965,9 +1074,9 @@ class Repository {
       '(SELECT COUNT(*) FROM artists) AS artists, '
       '(SELECT COUNT(*) FROM illust_tags) AS tags, '
       "(SELECT COUNT(*) FROM illust_meta WHERE error IS NULL OR missing = 1) AS meta, "
-      '(SELECT COUNT(DISTINCT pid) FROM images WHERE is_favorite = 1) AS favorites, '      '(SELECT COUNT(*) FROM ignored_artworks) AS ignored',
-    ))
-        .first;
+      '(SELECT COUNT(DISTINCT pid) FROM images WHERE is_favorite = 1) AS favorites, '
+      '(SELECT COUNT(*) FROM ignored_artworks) AS ignored',
+    )).first;
     int read(String key) => (row[key] as int?) ?? 0;
     return GalleryStats(
       images: read('images'),
@@ -986,11 +1095,10 @@ class Repository {
     return rows.isEmpty ? null : rows.first['value'] as String?;
   }
 
-  Future<void> setSetting(String key, String value) => db.insert(
-        'settings',
-        {'key': key, 'value': value},
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+  Future<void> setSetting(String key, String value) => db.insert('settings', {
+    'key': key,
+    'value': value,
+  }, conflictAlgorithm: ConflictAlgorithm.replace);
 
   Future<void> storeMeta(
     Map<String, Object?> meta,
@@ -998,23 +1106,37 @@ class Repository {
     int aiType = 0,
   }) async {
     await db.transaction((txn) async {
-      await txn.insert('illust_meta', meta, conflictAlgorithm: ConflictAlgorithm.replace);
-      await txn.delete('illust_tags', where: 'pid = ?', whereArgs: [meta['pid']]);
-      final batch = txn.batch();
-      // 私有表：Pixiv 的 AI 标记；0 也写，顺手覆盖旧值
-      batch.insert(
-        'illust_ai',
-        {'pid': meta['pid'], 'ai_type': aiType},
+      await txn.insert(
+        'illust_meta',
+        meta,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      await txn.delete(
+        'illust_tags',
+        where: 'pid = ?',
+        whereArgs: [meta['pid']],
+      );
+      final batch = txn.batch();
+      // 私有表：Pixiv 的 AI 标记；0 也写，顺手覆盖旧值
+      batch.insert('illust_ai', {
+        'pid': meta['pid'],
+        'ai_type': aiType,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
       for (final tag in tags) {
-        batch.insert('illust_tags', {'pid': meta['pid'], 'tag': tag},
-            conflictAlgorithm: ConflictAlgorithm.ignore);
+        batch.insert('illust_tags', {
+          'pid': meta['pid'],
+          'tag': tag,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
       final uid = meta['artist_uid'] as String?;
       final name = meta['artist_name'] as String?;
       if (uid != null && name != null) {
-        batch.update('artists', {'name': name}, where: 'uid = ?', whereArgs: [uid]);
+        batch.update(
+          'artists',
+          {'name': name},
+          where: 'uid = ?',
+          whereArgs: [uid],
+        );
       }
       await batch.commit(noResult: true);
     });
@@ -1023,79 +1145,72 @@ class Repository {
   Future<void> markMissing(String pid) async {
     await db.transaction((txn) async {
       await txn.delete('illust_tags', where: 'pid = ?', whereArgs: [pid]);
-      await txn.insert(
-        'illust_meta',
-        {
-          'pid': pid,
-          'title': '',
-          'page_count': 0,
-          'x_restrict': 0,
-          'sanity_level': 0,
-          'illust_type': 0,
-          'fetched_at': _now(),
-          'error': null,
-          'missing': 1,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await txn.insert('illust_meta', {
+        'pid': pid,
+        'title': '',
+        'page_count': 0,
+        'x_restrict': 0,
+        'sanity_level': 0,
+        'illust_type': 0,
+        'fetched_at': _now(),
+        'error': null,
+        'missing': 1,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     });
   }
 
-  Future<void> markFailed(String pid, String reason) => db.insert(
-        'illust_meta',
-        {
-          'pid': pid,
-          'title': '',
-          'page_count': 0,
-          'x_restrict': 0,
-          'sanity_level': 0,
-          'illust_type': 0,
-          'fetched_at': _now(),
-          'error': reason,
-          'missing': 0,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+  Future<void> markFailed(String pid, String reason) =>
+      db.insert('illust_meta', {
+        'pid': pid,
+        'title': '',
+        'page_count': 0,
+        'x_restrict': 0,
+        'sanity_level': 0,
+        'illust_type': 0,
+        'fetched_at': _now(),
+        'error': reason,
+        'missing': 0,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
 
   // ---------------------------------------------------------------- 映射
 
   int _now() => DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
   ImageRow _imageRow(Map<String, Object?> r) => ImageRow(
-        id: r['id'] as int,
-        libraryId: r['library_id'] as int,
-        path: r['path'] as String,
-        filename: r['filename'] as String,
-        fileSize: (r['file_size'] as int?) ?? 0,
-        modifiedAt: (r['modified_at'] as int?) ?? 0,
-        isFavorite: ((r['group_fav'] ?? r['is_favorite']) as int?) == 1,
-        rating: (r['rating'] as int?) ?? 0,
-        width: r['width'] as int?,
-        height: r['height'] as int?,
-        pid: r['pid'] as String?,
-        artistUid: r['artist_uid'] as String?,
-        mediaId: r['media_id'] as int?,
-        pageTotal: (r['page_total'] as int?) ?? 1,
-        xRestrict: (r['x_restrict'] as int?) ?? 0,
-        title: r['title'] as String?,
-        artistName: r['artist_name'] as String?,
-        artistAccount: r['artist_account'] as String?,
-      );
+    id: r['id'] as int,
+    libraryId: r['library_id'] as int,
+    path: r['path'] as String,
+    filename: r['filename'] as String,
+    fileSize: (r['file_size'] as int?) ?? 0,
+    modifiedAt: (r['modified_at'] as int?) ?? 0,
+    isFavorite: ((r['group_fav'] ?? r['is_favorite']) as int?) == 1,
+    rating: (r['rating'] as int?) ?? 0,
+    width: r['width'] as int?,
+    height: r['height'] as int?,
+    pid: r['pid'] as String?,
+    artistUid: r['artist_uid'] as String?,
+    mediaId: r['media_id'] as int?,
+    pageTotal: (r['page_total'] as int?) ?? 1,
+    xRestrict: (r['x_restrict'] as int?) ?? 0,
+    title: r['title'] as String?,
+    artistName: r['artist_name'] as String?,
+    artistAccount: r['artist_account'] as String?,
+  );
 
   ArtworkRow _artworkRow(Map<String, Object?> r) => ArtworkRow(
-        id: r['id'] as int,
-        pid: r['pid'] as String,
-        originalPath: r['original_path'] as String,
-        page: (r['page'] as int?) ?? 0,
-        width: r['width'] as int?,
-        height: r['height'] as int?,
-        title: r['title'] as String?,
-        artistName: r['artist_name'] as String?,
-        artistAccount: r['artist_account'] as String?,
-        pageCount: r['page_count'] as int?,
-        xRestrict: r['x_restrict'] as int?,
-        mediaId: r['media_id'] as int?,
-        pageTotal: (r['page_total'] as int?) ?? 1,
-        favorite: ((r['is_favorite'] as int?) ?? 0) == 1,
-      );
+    id: r['id'] as int,
+    pid: r['pid'] as String,
+    originalPath: r['original_path'] as String,
+    page: (r['page'] as int?) ?? 0,
+    width: r['width'] as int?,
+    height: r['height'] as int?,
+    title: r['title'] as String?,
+    artistName: r['artist_name'] as String?,
+    artistAccount: r['artist_account'] as String?,
+    pageCount: r['page_count'] as int?,
+    xRestrict: r['x_restrict'] as int?,
+    mediaId: r['media_id'] as int?,
+    pageTotal: (r['page_total'] as int?) ?? 1,
+    favorite: ((r['is_favorite'] as int?) ?? 0) == 1,
+  );
 }

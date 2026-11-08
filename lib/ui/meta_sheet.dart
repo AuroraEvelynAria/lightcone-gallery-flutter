@@ -11,7 +11,9 @@ Future<void> showMetaSheet(BuildContext context, AppState state) {
     isScrollControlled: true,
     showDragHandle: true,
     builder: (_) => Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: _MetaSheet(state: state),
     ),
   );
@@ -30,6 +32,7 @@ class _MetaSheetState extends State<_MetaSheet> {
   final _proxyController = TextEditingController();
   int? _pending;
   int? _pendingAvatars;
+  int? _pendingAi;
   bool _running = false;
   bool _stopRequested = false;
   int _processed = 0;
@@ -37,6 +40,7 @@ class _MetaSheetState extends State<_MetaSheet> {
   int _fetched = 0;
   int _failed = 0;
   bool _avatarPhase = false;
+  bool _aiPhase = false;
   String? _message;
 
   @override
@@ -54,22 +58,33 @@ class _MetaSheetState extends State<_MetaSheet> {
   Future<void> _load() async {
     final proxy = await widget.state.repo.setting('pixiv_proxy') ?? '';
     final pending = await widget.state.repo.pendingMetaCount();
-    final pendingAvatars = await ArtistAvatarStore.pendingCount(widget.state.repo);
+    final pendingAvatars = await ArtistAvatarStore.pendingCount(
+      widget.state.repo,
+    );
+    final pendingAi = await widget.state.repo.pendingAiCount();
     if (!mounted) return;
     setState(() {
       _proxyController.text = proxy;
       _pending = pending;
       _pendingAvatars = pendingAvatars;
+      _pendingAi = pendingAi;
     });
   }
 
   Future<void> _saveProxy() async {
-    await widget.state.repo.setSetting('pixiv_proxy', _proxyController.text.trim());
+    await widget.state.repo.setSetting(
+      'pixiv_proxy',
+      _proxyController.text.trim(),
+    );
     if (!mounted) return;
     setState(() => _message = '代理已保存');
   }
 
   Future<void> _start() async {
+    if (widget.state.metaBusy) {
+      setState(() => _message = '正在自动补全，请稍候…');
+      return;
+    }
     setState(() {
       _running = true;
       _stopRequested = false;
@@ -78,6 +93,7 @@ class _MetaSheetState extends State<_MetaSheet> {
       _fetched = 0;
       _failed = 0;
       _avatarPhase = false;
+      _aiPhase = false;
       _message = null;
     });
     // 1) 作品元数据
@@ -100,7 +116,8 @@ class _MetaSheetState extends State<_MetaSheet> {
       },
     );
     if (!mounted) return;
-    setState(() => _message = result);
+    var message = result;
+    setState(() => _message = message);
 
     // 2) 画师头像：元数据之后跑，已有的直接跳过（全增量）
     if (!_stopRequested) {
@@ -124,8 +141,10 @@ class _MetaSheetState extends State<_MetaSheet> {
         },
       );
       if (!mounted) return;
-      final summary = StringBuffer('头像：新补 ${avatars.fetched} · '
-          '跳过已有 ${avatars.skipped}');
+      final summary = StringBuffer(
+        '头像：新补 ${avatars.fetched} · '
+        '跳过已有 ${avatars.skipped}',
+      );
       if (avatars.none > 0) summary.write(' · 无头像 ${avatars.none}');
       if (avatars.failed > 0) {
         summary.write(' · 失败 ${avatars.failed}');
@@ -136,10 +155,35 @@ class _MetaSheetState extends State<_MetaSheet> {
       }
       if (avatars.stopped) summary.write(' · 已停止');
       if (avatars.aborted) summary.write(' · ${avatars.error}');
-      setState(() => _message = '$result\n$summary');
+      message = '$result\n$summary';
+      setState(() => _message = message);
       // 头像文件不是数据库行：分类页/作品库不会自己知道有新图，
       // 这里 bump 一次，列表按 dataVersion 重建头像。
       widget.state.bumpData();
+
+      // 3) 回填老作品的 Pixiv AI 标记（illustAIType）
+      if (!_stopRequested && (_pendingAi ?? 0) > 0) {
+        setState(() {
+          _processed = 0;
+          _total = 0;
+          _avatarPhase = false;
+          _aiPhase = true;
+          _message = '开始回填 AI 标记…';
+        });
+        final aiSummary = await widget.state.fetchAiTypes(
+          isStopped: () => _stopRequested,
+          onProgress: (done, total) {
+            if (!mounted) return;
+            setState(() {
+              _processed = done;
+              _total = total;
+            });
+          },
+        );
+        if (!mounted) return;
+        message = '$message\n$aiSummary';
+        setState(() => _message = message);
+      }
     }
 
     if (!mounted) return;
@@ -157,22 +201,34 @@ class _MetaSheetState extends State<_MetaSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('补全 Pixiv 元数据', style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              '补全 Pixiv 元数据',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             Text(
               pending == null
                   ? '统计中…'
                   : pending == 0
-                      ? '全部作品都有元数据了'
-                      : '还有 $pending 个 PID 待补全',
+                  ? '全部作品都有元数据了'
+                  : '还有 $pending 个 PID 待补全',
             ),
             const SizedBox(height: 2),
             Text(
               _pendingAvatars == null
                   ? '头像：统计中…'
                   : _pendingAvatars == 0
-                      ? '画师头像已经都补过了'
-                      : '画师头像还有 $_pendingAvatars 个没补（已有的会跳过）',
+                  ? '画师头像已经都补过了'
+                  : '画师头像还有 $_pendingAvatars 个没补（已有的会跳过）',
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              _pendingAi == null
+                  ? 'AI 标记：统计中…'
+                  : _pendingAi == 0
+                  ? 'AI 标记已经全了'
+                  : 'AI 标记还有 $_pendingAi 个没补（Pixiv illustAIType）',
               style: Theme.of(context).textTheme.labelSmall,
             ),
             if (_running) ...[
@@ -182,7 +238,9 @@ class _MetaSheetState extends State<_MetaSheet> {
               ),
               const SizedBox(height: 6),
               Text(
-                _avatarPhase
+                _aiPhase
+                    ? 'AI 标记 $_processed/$_total'
+                    : _avatarPhase
                     ? '画师头像 $_processed/$_total'
                     : '本批 $_processed/$_total · 成功 $_fetched · 失败 $_failed',
                 style: Theme.of(context).textTheme.labelSmall,
@@ -207,10 +265,7 @@ class _MetaSheetState extends State<_MetaSheet> {
             ),
             if (_message != null) ...[
               const SizedBox(height: 8),
-              Text(
-                _message!,
-                style: Theme.of(context).textTheme.labelSmall,
-              ),
+              Text(_message!, style: Theme.of(context).textTheme.labelSmall),
             ],
             const SizedBox(height: 16),
             Row(
@@ -221,9 +276,10 @@ class _MetaSheetState extends State<_MetaSheet> {
                   onPressed: _running
                       ? null
                       : (pending == null || pending == 0) &&
-                              (_pendingAvatars == null || _pendingAvatars == 0)
-                          ? null
-                          : _start,
+                            (_pendingAvatars == null || _pendingAvatars == 0) &&
+                            (_pendingAi == null || _pendingAi == 0)
+                      ? null
+                      : _start,
                   child: const Text('开始补全'),
                 ),
                 const SizedBox(width: 8),

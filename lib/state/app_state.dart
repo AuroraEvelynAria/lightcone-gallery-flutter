@@ -23,6 +23,10 @@ class AppState extends ChangeNotifier {
   bool scanning = false;
   String? scanMessage;
 
+  /// 元数据补全的互斥锁：启动自动补全 / 手动面板不能同时跑。
+  bool _metaBusy = false;
+  bool get metaBusy => _metaBusy;
+
   Future<void> ensurePermission() async {
     hasPermission = await MediaChannel.hasPermission();
     notifyListeners();
@@ -116,10 +120,14 @@ class AppState extends ChangeNotifier {
     try {
       await repo.db.execute('PRAGMA wal_checkpoint(FULL)');
       await File(repo.db.path).copy(temp.path);
-      final date = '${stamp.year}'
+      final date =
+          '${stamp.year}'
           '${stamp.month.toString().padLeft(2, '0')}'
           '${stamp.day.toString().padLeft(2, '0')}';
-      final saved = await MediaChannel.exportBackup(temp.path, 'lightcone-$date.db');
+      final saved = await MediaChannel.exportBackup(
+        temp.path,
+        'lightcone-$date.db',
+      );
       return saved == null ? '已取消导出' : '已导出（$saved）';
     } catch (e) {
       return '导出失败：$e';
@@ -131,38 +139,166 @@ class AppState extends ChangeNotifier {
   }
 
   /// 补全元数据：一批接一批跑，直到没有待补全 / 叫停 / 撞限流。
+  /// [maxCount] 用于启动自动补全 —— 只跑一小批，别让用户等一小时。
   Future<String> fetchMeta({
     required bool Function() isStopped,
     ValueChanged<MetaBatch>? onBatch,
     void Function(int processed, int total)? onProgress,
+    int? maxCount,
   }) async {
-    // build 内部会把桌面回环地址规范化为「不走代理」
+    if (_metaBusy) return '正在补全，请稍候';
+    _metaBusy = true;
+    try {
+      // build 内部会把桌面回环地址规范化为「不走代理」
+      final proxy = await repo.setting('pixiv_proxy');
+      final dio = PixivClient.build(proxy);
+      var done = 0;
+      var fetched = 0, failed = 0;
+      String? lastError;
+      while (!isStopped()) {
+        final remaining = await repo.pendingMetaCount();
+        if (remaining == 0) break;
+        final batch = await PixivClient.fetchBatch(
+          repo,
+          dio,
+          limit: 50,
+          overallDone: done,
+          watchStop: isStopped,
+          onProgress: onProgress,
+        );
+        done += batch.fetched + batch.missing + batch.failed;
+        fetched += batch.fetched;
+        failed += batch.failed;
+        lastError = batch.lastError ?? lastError;
+        onBatch?.call(batch);
+        if (batch.aborted) break;
+        if (maxCount != null && done >= maxCount) break;
+      }
+      bumpData();
+      return lastError == null
+          ? '补全结束：成功 $fetched · 失败 $failed'
+          : '补全结束：成功 $fetched · 失败 $failed · $lastError';
+    } finally {
+      _metaBusy = false;
+    }
+  }
+
+  /// 启动时：静默增量扫描当前图库目录，发现缺元数据的新作品就补一小批。
+  ///
+  /// 返回一条给用户看的轻量提示；null = 没新东西/权限没给/正在手动补全。
+  Future<String?> autoSyncOnLaunch({bool enabled = true}) async {
+    if (!enabled || _metaBusy) return null;
+    await ensurePermission();
+    if (!hasPermission) return null;
+    await scanAll();
+    final pending = await repo.pendingMetaCount();
+    if (pending == 0) return null;
+    final proxy = await repo.setting('pixiv_proxy');
+    if (!await PixivClient.probePixiv(proxy)) {
+      return '检测到 $pending 部作品缺元数据，暂时连不上 Pixiv（联网后可手动补全）';
+    }
+    var fetched = 0;
+    await fetchMeta(
+      isStopped: () => false,
+      maxCount: 50,
+      onBatch: (batch) => fetched += batch.fetched,
+    );
+    final left = await repo.pendingMetaCount();
+    if (left == 0) {
+      return fetched > 0 ? '已补全 $fetched 部作品' : '缺元数据的作品已处理（已删除 / 无结果）';
+    }
+    if (fetched == 0) {
+      return '检测到 $left 部作品缺元数据，这次没补上（看看代理 / 网络）';
+    }
+    return '已补全 $fetched 部作品，还有 $left 部下次启动继续';
+  }
+
+  /// 回填老作品的 Pixiv AI 标记（`illustAIType`）。
+  ///
+  /// 只写私有表 `illust_ai`，不动标题/标签；老元数据没有这个字段，
+  /// 所以只能逐条打 `/ajax/illust/{pid}`。限流语义与补全元数据一致，
+  /// 可停可续：成功/无作品会落行，失败的不落，下次接着补。
+  Future<String> fetchAiTypes({
+    required bool Function() isStopped,
+    void Function(int processed, int total)? onProgress,
+  }) async {
+    final total = await repo.pendingAiCount();
+    if (total == 0) return 'AI 标记已经是全的';
     final proxy = await repo.setting('pixiv_proxy');
     final dio = PixivClient.build(proxy);
-    var done = 0;
-    var fetched = 0, failed = 0;
+    var done = 0, fetched = 0, missing = 0, failed = 0, consecutive = 0;
+    var stopped = false;
     String? lastError;
     while (!isStopped()) {
-      final remaining = await repo.pendingMetaCount();
-      if (remaining == 0) break;
-      final batch = await PixivClient.fetchBatch(
-        repo,
-        dio,
-        limit: 50,
-        overallDone: done,
-        watchStop: isStopped,
-        onProgress: onProgress,
-      );
-      done += batch.fetched + batch.missing + batch.failed;
-      fetched += batch.fetched;
-      failed += batch.failed;
-      lastError = batch.lastError ?? lastError;
-      onBatch?.call(batch);
-      if (batch.aborted) break;
+      final pids = await repo.pendingAiPids(50);
+      if (pids.isEmpty) break;
+      for (var i = 0; i < pids.length; i++) {
+        if (isStopped()) {
+          stopped = true;
+          break;
+        }
+        final outcome = await PixivClient.fetchIllust(dio, pids[i]);
+        var halt = false;
+        switch (outcome) {
+          case FetchFetched(:final meta):
+            await repo.storeAiType(meta.pid, meta.aiType);
+            fetched++;
+            consecutive = 0;
+          case FetchMissing():
+            // 作品没了：记 0，别每轮都重试
+            await repo.storeAiType(pids[i], 0);
+            missing++;
+            consecutive = 0;
+          case FetchRateLimited(:final reason):
+            failed++;
+            lastError = reason;
+            halt = true;
+          case FetchFailed(:final reason):
+            failed++;
+            lastError = reason;
+            consecutive++;
+        }
+        done++;
+        onProgress?.call(done, total);
+        if (halt) {
+          stopped = true;
+          break;
+        }
+        if (consecutive >= PixivClient.maxConsecutiveFailures) {
+          stopped = true;
+          break;
+        }
+        if (i != pids.length - 1) {
+          await _stopAwareDelay(
+            done % PixivClient.cooldownEvery == 0
+                ? PixivClient.cooldown
+                : PixivClient.requestInterval,
+            isStopped,
+          );
+        }
+      }
+      if (stopped) break;
     }
     bumpData();
-    return lastError == null
-        ? '补全结束：成功 $fetched · 失败 $failed'
-        : '补全结束：成功 $fetched · 失败 $failed · $lastError';
+    final summary = 'AI 标记：成功 $fetched · 无作品 $missing · 失败 $failed';
+    final suffix = [
+      if (stopped) '已停止',
+      ?lastError,
+    ].whereType<String>().join(' · ');
+    return suffix.isEmpty ? summary : '$summary · $suffix';
+  }
+
+  /// 30s 冷却时也能及时响应「停止」。
+  Future<void> _stopAwareDelay(
+    Duration total,
+    bool Function() isStopped,
+  ) async {
+    var left = total.inMilliseconds;
+    while (left > 0) {
+      if (isStopped()) return;
+      final step = left < 100 ? left : 100;
+      await Future<void>.delayed(Duration(milliseconds: step));
+      left -= step;
+    }
   }
 }

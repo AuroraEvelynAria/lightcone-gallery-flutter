@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:sqflite/sqflite.dart' show getDatabasesPath;
 
 import '../data/models.dart';
-import '../media/media_channel.dart';
+import '../media/directory_tree.dart';
 import '../state/app_settings.dart';
 import '../state/app_state.dart';
 import 'brand.dart';
+import 'directory_picker.dart';
 import 'meta_sheet.dart';
 import 'palettes.dart';
 
@@ -58,7 +60,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _pending = pending;
       _dbDir = dbDir;
       // 正在输入时不要覆盖用户的光标
-      if (!_proxyController.selection.isValid || _proxyController.text.isEmpty) {
+      if (!_proxyController.selection.isValid ||
+          _proxyController.text.isEmpty) {
         _proxyController.text = proxy;
       }
     });
@@ -113,27 +116,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _proxyController.text.trim(),
     );
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('代理已保存（与桌面端共用同一设置）')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('代理已保存（与桌面端共用同一设置）')));
   }
 
   Future<void> _changeRoot() async {
-    final picked = await MediaChannel.pickDirectory();
+    // 应用内目录树：不经过系统 SAF 选择器（无障碍自动点击器会把系统对话框
+    // 瞬间点掉，真机上表现为「只能停在 Pictures」）。
+    final picked = await showDirectoryPicker(
+      context,
+      initialPath: widget.state.repo.libraryRoot,
+    );
     if (picked == null || !mounted) return;
+    final name = DirectoryTree.nameOf(picked);
     final ok = await _confirm(
-      title: '切换到「${picked.name}」？',
-      content: '会在 ${picked.path} 建立/迁移图库；不在这个目录下的图片索引会被清掉'
+      title: '切换到「$name」？',
+      content:
+          '会在 $picked 建立/迁移图库；不在这个目录下的图片索引会被清掉'
           '（手机上的原图不会被删）。',
       okLabel: '切换',
     );
     if (!ok || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
-    await widget.state.repo.setLibraryRoot(picked.path, name: picked.name);
+    await widget.state.repo.setLibraryRoot(picked, name: name);
     widget.state.bumpData();
-    messenger.showSnackBar(
-      const SnackBar(content: Text('目录已切换，点「扫描图库」把图收进来')),
-    );
+    messenger.showSnackBar(const SnackBar(content: Text('目录已切换，点「扫描图库」把图收进来')));
     await _load();
   }
 
@@ -205,6 +212,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 enabled: !_busy,
                 onTap: () => _run(widget.state.scanAll),
               ),
+              SwitchListTile(
+                secondary: const Icon(Icons.auto_awesome_outlined),
+                value: settings.autoMeta,
+                onChanged: (value) => settings.setAutoMeta(value),
+                title: const Text('启动时自动补全新作品'),
+                subtitle: const Text('打开软件后增量扫描当前目录，最多补 50 条元数据；需要能访问 Pixiv'),
+              ),
               ListTile(
                 leading: const Icon(Icons.merge_type),
                 title: const Text('从桌面备份补元数据'),
@@ -231,7 +245,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onTap: () async {
                   final ok = await _confirm(
                     title: '替换本机索引？',
-                    content: '会把本机全部图片 / 作品索引换成备份里的内容。'
+                    content:
+                        '会把本机全部图片 / 作品索引换成备份里的内容。'
                         '桌面备份里的路径是 Windows 路径，换完之后手机上的图显示不出来，'
                         '需要再扫描一次。\n\n'
                         '收藏、评分与忽略名单也会被覆盖。',
@@ -250,7 +265,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               ListTile(
                 leading: const Icon(Icons.visibility_off_outlined),
-                title: Text('清空忽略名单${stats == null ? '' : '（${stats.ignored}）'}'),
+                title: Text(
+                  '清空忽略名单${stats == null ? '' : '（${stats.ignored}）'}',
+                ),
                 subtitle: const Text('移出的条目会重新参与扫描'),
                 enabled: !_busy && (stats?.ignored ?? 0) > 0,
                 onTap: () async {
@@ -318,8 +335,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: LightConeMark(size: 40, glow: false),
                 ),
                 title: const Text('光锥图库 · Flutter 版'),
-                subtitle: Text('版本 $_version · 索引 schema v12\n'
-                    '与桌面端共用同一套表结构'),
+                subtitle: Text(
+                  '版本 $_version · 索引 schema v12\n'
+                  '与桌面端共用同一套表结构',
+                ),
                 isThreeLine: true,
               ),
               _InfoBlock(
@@ -336,6 +355,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 }
 
 /// 路径类的信息块：不用 ListTile —— 长路径会换行，ListTile 的固定行高会溢出。
+///
+/// 路径用普通 Text + 右侧复制按钮，不再用 SelectableText：长按弹系统复制菜单
+/// 在设置页里很突兀，而且和别处的长按手势不一致；点按钮复制更明确。
 class _InfoBlock extends StatelessWidget {
   const _InfoBlock({
     required this.icon,
@@ -347,11 +369,18 @@ class _InfoBlock extends StatelessWidget {
   final String title;
   final String value;
 
+  Future<void> _copy(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('已复制$title')));
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      padding: const EdgeInsets.fromLTRB(16, 12, 4, 12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -363,7 +392,7 @@ class _InfoBlock extends StatelessWidget {
               children: [
                 Text(title, style: theme.textTheme.bodyMedium),
                 const SizedBox(height: 2),
-                SelectableText(
+                Text(
                   value,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
@@ -373,6 +402,13 @@ class _InfoBlock extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            iconSize: 18,
+            tooltip: '复制$title',
+            onPressed: () => _copy(context),
+            icon: const Icon(Icons.copy_outlined),
           ),
         ],
       ),
@@ -492,10 +528,7 @@ class _PalettePicker extends StatelessWidget {
         children: [
           Text('配色', style: theme.textTheme.bodyMedium),
           const SizedBox(height: 4),
-          Text(
-            '种子色 + 对应的深色底，深浅主题都跟着换',
-            style: theme.textTheme.labelSmall,
-          ),
+          Text('种子色 + 对应的深色底，深浅主题都跟着换', style: theme.textTheme.labelSmall),
           const SizedBox(height: 10),
           Wrap(
             spacing: 14,
@@ -570,7 +603,8 @@ class _PaletteSwatch extends StatelessWidget {
   }
 }
 
-class _ColumnPicker extends StatelessWidget {  const _ColumnPicker({required this.settings});
+class _ColumnPicker extends StatelessWidget {
+  const _ColumnPicker({required this.settings});
 
   final AppSettings settings;
 
@@ -603,7 +637,8 @@ class _ColumnPicker extends StatelessWidget {  const _ColumnPicker({required thi
               style: SegmentedButton.styleFrom(
                 visualDensity: VisualDensity.compact,
               ),
-              onSelectionChanged: (value) => settings.setGridColumns(value.first),
+              onSelectionChanged: (value) =>
+                  settings.setGridColumns(value.first),
             ),
           ),
         ],

@@ -23,10 +23,31 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
 
+  @override
+  void initState() {
+    super.initState();
+    // 扫描状态在 AppState 里；不监听的话顶栏的转圈不会更新
+    widget.state.addListener(_onState);
+  }
+
+  @override
+  void dispose() {
+    widget.state.removeListener(_onState);
+    super.dispose();
+  }
+
+  void _onState() {
+    if (mounted) setState(() {});
+  }
+
   static const _titles = ['全部图片', '作品库', '搜索', '分类'];
 
   static const _tabs = [
-    (icon: Icons.photo_library_outlined, active: Icons.photo_library, label: '图库'),
+    (
+      icon: Icons.photo_library_outlined,
+      active: Icons.photo_library,
+      label: '图库',
+    ),
     (icon: Icons.folder_outlined, active: Icons.folder, label: '作品库'),
     (icon: Icons.search, active: Icons.search, label: '搜索'),
     (icon: Icons.category_outlined, active: Icons.category, label: '分类'),

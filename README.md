@@ -6,14 +6,49 @@
 > 共用同一套 schema v12，元数据、收藏与评分可以在两端之间合并。
 
 <p align="center">
-  <img src="docs/screenshots/gallery.jpg" width="18%" alt="图库" />
-  <img src="docs/screenshots/artworks.jpg" width="18%" alt="作品库" />
-  <img src="docs/screenshots/detail.jpg" width="18%" alt="详情" />
-  <img src="docs/screenshots/settings.jpg" width="18%" alt="设置" />
-  <img src="docs/screenshots/browse.jpg" width="18%" alt="分类" />
+  <a href="docs/screenshots/gallery.jpg"><img src="docs/screenshots/gallery.jpg" width="70%" alt="图库：一个作品一张卡" /></a>
+  <br /><sub>图库：一个作品一张卡，右下角标页数；预览库只有这一件作品</sub>
 </p>
 
-> 截图里的插画是脚本生成的占位图（`tool/make_demo_art.py`），不包含任何真实作品。
+<p align="center">
+  <a href="docs/screenshots/artworks.jpg"><img src="docs/screenshots/artworks.jpg" width="70%" alt="作品库：同一 PID 多页只占一卡" /></a>
+  <br /><sub>作品库：同一 PID 的 6 页只占一张卡，标题 / 画师 / 收藏在卡外</sub>
+</p>
+
+<p align="center">
+  <a href="docs/screenshots/detail.jpg"><img src="docs/screenshots/detail.jpg" width="70%" alt="详情：元数据、评分与标签" /></a>
+  <br /><sub>详情：整组图竖向排开，评分与标签在图片下方（AI生成标签在首位）</sub>
+</p>
+
+<p align="center">
+  <a href="docs/screenshots/search-pid.jpg"><img src="docs/screenshots/search-pid.jpg" width="70%" alt="搜索：按 PID 命中" /></a>
+  <br /><sub>搜索 · PID：输入 151827235 直接命中这件作品</sub>
+</p>
+
+<p align="center">
+  <a href="docs/screenshots/search-artist.jpg"><img src="docs/screenshots/search-artist.jpg" width="70%" alt="搜索：按画师名命中" /></a>
+  <br /><sub>搜索 · 画师：输入 AuroraAria，只出现这一件本地作品</sub>
+</p>
+
+<p align="center">
+  <a href="docs/screenshots/browse-artists.jpg"><img src="docs/screenshots/browse-artists.jpg" width="70%" alt="分类：只有一位画师" /></a>
+  <br /><sub>分类 · 画师：预览库里只有 AuroraAria 一位画师</sub>
+</p>
+
+<p align="center">
+  <a href="docs/screenshots/browse-tags.jpg"><img src="docs/screenshots/browse-tags.jpg" width="70%" alt="分类：这件作品的标签" /></a>
+  <br /><sub>分类 · 标签：只有这件作品的 5 个标签（含 AI 生成汇总）</sub>
+</p>
+
+<p align="center">
+  <a href="docs/screenshots/settings.jpg"><img src="docs/screenshots/settings.jpg" width="70%" alt="设置：补全元数据过程" /></a>
+  <br /><sub>设置 · 补全元数据：正在补全这件作品的 Pixiv 元数据（1 个 PID）</sub>
+</p>
+
+> 预览图只使用作者本人的《星夜下的鲸鱼娘》（Pixiv
+> [151827235](https://www.pixiv.net/artworks/151827235)，画师 AuroraAria），预览库
+> 只放了这一件作品；截图里的标题 / 画师 / UID / 标签都是这件作品的真实元数据，
+> 没有其他画师的信息。插画为 AI 生成，无 NSFW。
 
 ## 功能
 
@@ -34,10 +69,14 @@
   检视器分享当前一张；分享走 `FileProvider`，不暴露真实路径。聊天软件默认会压缩
   图片，所以另给了「以文件分享（不压缩）」和「保存原图到相册（Pictures/LightCone）」。
   菜单里可设为主屏 / 锁屏 / 同时。
-- **目录可选**：首次启动选图库目录（默认 `Pictures/pixez`），设置里随时更换
+- **目录可选**：首次启动选图库目录（默认 `Pictures/pixez`），设置里随时更换；
+  目录选择走**应用内目录树**（MediaStore 整理，不经过系统 SAF），不会被
+  「李跳跳 / GKD」这类无障碍自动点击器瞬间点掉
 - **与桌面互通**：导入桌面备份（元数据 / 收藏 / 评分 / 画廊），也能导出 `.db` 回桌面
 - **观感**：六套配色、深浅主题、R-18 封面模糊、自适应布局（横屏左侧导航）
 - **元数据补全**：免 OAuth 的 Pixiv ajax 端点，限流语义与桌面版一致
+- **启动自动补全**：打开软件后增量扫描当前目录，发现新作品自动补元数据
+  （每次最多 50 条，联网预检，不挡开屏；设置里可关）
 
 ## 为什么换 Flutter，以及它为什么流畅
 
@@ -120,6 +159,12 @@ android/app/src/main/res/drawable/ic_lightcone*.xml
   掐握手时这是最常见的一类错）、限流词跨语种判定。代理与桌面共用 settings 表的
   `pixiv_proxy` 键（导入备份自动带来）；**127.0.0.1/localhost 在手机上会被
   视为「直连」**（桌面的回环地址在手机上指向手机自己）。
+- **启动自动补全**（`AppState.autoSyncOnLaunch`，设置键 `mobile_auto_meta`，
+  默认开）：首帧后 `ensurePermission` → `scanAll` 增量 → 有缺元数据的新作品
+  → `PixivClient.probePixiv` 4s 预检（连不上就跳过，不白等 3×20s 超时）→
+  `fetchMeta(maxCount: 50)`；与手动补全共用 `metaBusy` 锁；完成后 SnackBar
+  报「已补全 X 部」。AI 标记随新元数据落库；头像仍按需/手动批补，
+  旧作品的 AI 回填仍是手动长任务。
 - **从另一份 LightCone 索引合并元数据**（⋮ →「从桌面备份补元数据」）：
   `ATTACH` 源库后只 `INSERT OR REPLACE` `illust_meta`（成功/确认删除的行）、
   `illust_tags` 与 `artists.name`，**不动本机 artworks / images**。
@@ -215,8 +260,10 @@ android/app/src/main/res/drawable/ic_lightcone*.xml
   判定 = Pixiv `illustAIType == 2`（新补的元数据写进私有表 `illust_ai`）
   ∪ 常见 AI 标签的全名匹配（`AI生成` / `AIイラスト` / `ai` / `AI-generated`
   / `ai-assisted` / `NovelAI` …，不会把 Honkai 这类含 "ai" 的词算进来）。
-  老元数据没有 Pixiv 标记时靠标签兜底；原始 AI 标签从普通标签列表里收掉，
-  避免同一个意思出现好几枚。
+  老元数据没有 Pixiv 标记时先靠标签兜底；**「补全 Pixiv 元数据」面板的
+  第三阶段会逐条回填 `illustAIType`**（本机 4,289 个老作品，800ms 限流，
+  可停可续），回填后详情 / AI 筛选 / 计数都以 Pixiv 标记为准，不再依赖标签。
+  原始 AI 标签从普通标签列表里收掉，避免同一个意思出现好几枚。
 - **R-18 封面模糊**（设置 → 外观，默认开，键 `mobile_blur_r18`）：网格里
   `x_restrict > 0` 的封面用 GPU 高斯模糊 + `R-18` 角标，**点进详情正常显示**。
   判定用 Pixiv 的 `x_restrict` 而不是看标签 —— 本库 4,183 个作品里只有 655 个
@@ -245,12 +292,12 @@ android/app/src/main/res/drawable/ic_lightcone*.xml
     森绿 / 琥珀 / 紫罗兰，种子色 + 对应深色底）、网格列数（自动 / 2 / 3 / 4 / 5）、
     **模糊 R-18 封面**（默认开）；
   - 数据：图片/作品/页/画师/标签/元数据/收藏计数、**图库目录与更换目录**、扫描、
-    从桌面备份合并元数据、补全元数据（跑完元数据接着补画师头像，全增量）、
-    导入备份、清空忽略名单；
+    **启动时自动补全新作品**（每次最多 50 条）、从桌面备份合并元数据、补全元数据
+    （元数据 → 画师头像 → AI 标记回填，全增量）、导入备份、清空忽略名单；
   - 网络：Pixiv 代理（与桌面共用 `pixiv_proxy` 键）；
-  - 关于：版本、schema v12、数据库路径（可长按复制）。
+  - 关于：版本、schema v12、数据库路径（点右侧复制按钮，不再长按弹系统菜单）。
   偏好键为 `mobile_theme` / `mobile_theme_seed` / `mobile_grid_columns` /
-  `mobile_blur_r18` / `mobile_library_root` —— 加 `mobile_` 前缀是为了
+  `mobile_blur_r18` / `mobile_auto_meta` / `mobile_library_root` —— 加 `mobile_` 前缀是为了
   不和桌面的键打架；导入桌面备份整表替换设置时这些键会丢，读不到就用默认值。
 
 ## 构建
@@ -381,6 +428,19 @@ Kotlin 版（`com.lightcone.gallery.android`）并存，互不覆盖数据。
     - 真机补完：1,610 个画师全部处理（跳过已有 1,610、无头像 13）；分类
       列表从顶到底绝大多数都有头像，13 个是 Pixiv 默认/无头像账号，显示首字母；
     - `flutter analyze` 干净，36 项测试全过。
+17. ✅ AI 标记回填（2026-11-08，release 真机）：
+    - 老元数据没有 Pixiv 的 `illustAIType`，很多 AI 作品只有标签、甚至没标签；
+      「补全 Pixiv 元数据」面板新增第三阶段，逐条打 `/ajax/illust/{pid}`
+      取 `aiType` 写进私有 `illust_ai`，**只写标记，不动标题/标签**；
+    - 本机待补 4,289 个；试跑 192 个：成功 192、无作品 0、失败 0，
+      待补降到 4,097，停止后可继续；回填后详情/AI 筛选/计数按 Pixiv 标记；
+    - 800ms 限流、连续 3 败停、可停可续；AI 标签的全名匹配继续兜底没回填到的作品。
+18. ✅ 启动自动补全（2026-11-08，release 构建；真机锁屏待目视）：
+    - 首帧后静默 `scanAll` 增量扫描；有缺元数据的新作品时先用 4s 探一次 Pixiv
+      （连不上就跳过），最多补 50 条；与手动补全共用 `metaBusy` 锁；设置 →
+      数据里的「启动时自动补全新作品」可关；完成后 SnackBar 报「已补全 X 部」；
+    - `flutter analyze` 干净，36 项测试全过，构建/装机通过；写这段时手机锁屏，
+      完整的「加新图 → 开软件 → 自动补上」还没在真机目视，主人开屏即可验证。
 
 `dumpsys gfxinfo` 对 Flutter 无效（引擎自绘，报 0 帧），要用 SurfaceFlinger/
 录屏方式量。

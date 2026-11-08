@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'data/db.dart';
 import 'data/repository.dart';
@@ -11,6 +12,11 @@ import 'ui/splash_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // 预览构建：隐藏通知栏与手势条，截图里不出现系统 UI。
+  // （MIUI 的 policy_control 对这个窗口不生效，只能从 App 侧 immersive。）
+  if (const bool.fromEnvironment('DEMO_PREVIEW')) {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
   // 第一帧立刻出开屏：开库 / 迁移 / 读设置都在开屏背后跑。
   // 旧版是在 runApp 之前 await 这些，冷启动那几百毫秒是纯白的系统窗口。
   runApp(const LightConeBootstrap());
@@ -28,6 +34,9 @@ class _LightConeBootstrapState extends State<LightConeBootstrap> {
   /// 设置对象先建好（还没挂仓库）：这样 MaterialApp 的树从第一帧就是稳定的，
   /// 开屏切主界面时才能做淡入，而不是整棵树重建。
   late final AppSettings _settings = AppSettings()..addListener(_onSettings);
+
+  /// 启动自动补全要弹一条轻提示，但那时还没有页面 context。
+  final _messengerKey = GlobalKey<ScaffoldMessengerState>();
 
   AppState? _state;
   Object? _error;
@@ -63,10 +72,18 @@ class _LightConeBootstrapState extends State<LightConeBootstrap> {
       // 演示构建（--dart-define=DEMO_ROOT=...）：直接建演示库并塞假元数据，
       // README 截图用；正常构建里这个字符串是空的，整段不会执行。
       const demoRoot = String.fromEnvironment('DEMO_ROOT');
+      // DEMO_PREVIEW：不塞假元数据、不自动补全，只扫描目录。用来拍「补全
+      // 元数据」过程（库里的作品全是真实文件，元数据留给设置页手动补）。
+      const demoPreview = bool.fromEnvironment('DEMO_PREVIEW');
       if (demoRoot.isNotEmpty) {
         // 每次启动都校正根目录（构建时路径被 shell 转换过也能自愈）
-        await repo.setLibraryRoot(demoRoot, name: 'demo');
-        await repo.seedDemoMetadata();
+        await repo.setLibraryRoot(
+          demoRoot,
+          name: demoPreview ? 'preview' : 'demo',
+        );
+        if (!demoPreview) {
+          await repo.seedDemoMetadata();
+        }
       }
       final state = AppState(repo);
       // 有库才做迁移/清理；没有库就走首次引导（选目录）
@@ -86,9 +103,28 @@ class _LightConeBootstrapState extends State<LightConeBootstrap> {
         _state = state;
         _needsOnboarding = !hasLibrary;
       });
-      // 权限请求放到主界面出来之后：系统对话框不该盖在开屏上
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) state.ensurePermission();
+      // 权限请求放到主界面出来之后：系统对话框不该盖在开屏上。
+      // 有库且开了自动补全时，顺便静默扫一次目录、补新作品的元数据。
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        if (_needsOnboarding) {
+          await state.ensurePermission();
+          return;
+        }
+        if (demoPreview) {
+          // 预览库只扫描目录；元数据留给设置页手动补，截图才能拍到过程。
+          await state.ensurePermission();
+          await state.scanAll();
+          return;
+        }
+        final notice = await state.autoSyncOnLaunch(
+          enabled: _settings.autoMeta,
+        );
+        if (notice != null && mounted) {
+          _messengerKey.currentState?.showSnackBar(
+            SnackBar(content: Text(notice)),
+          );
+        }
       });
     } catch (e) {
       if (mounted) setState(() => _error = e);
@@ -102,7 +138,11 @@ class _LightConeBootstrapState extends State<LightConeBootstrap> {
 
     final Widget home;
     if (error != null) {
-      home = _BootError(key: const ValueKey('error'), error: error, onRetry: _boot);
+      home = _BootError(
+        key: const ValueKey('error'),
+        error: error,
+        onRetry: _boot,
+      );
     } else if (state == null) {
       home = const SplashScreen(key: ValueKey('splash'));
     } else if (_needsOnboarding) {
@@ -124,6 +164,7 @@ class _LightConeBootstrapState extends State<LightConeBootstrap> {
       child: MaterialApp(
         title: '光锥图库',
         debugShowCheckedModeBanner: false,
+        scaffoldMessengerKey: _messengerKey,
         theme: _theme(Brightness.light, _settings.palette),
         darkTheme: _theme(Brightness.dark, _settings.palette),
         themeMode: _settings.themeMode,

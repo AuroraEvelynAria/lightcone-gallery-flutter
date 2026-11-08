@@ -69,6 +69,23 @@ class PixivClient {
     return (rest.substring(0, colon), port);
   }
 
+  /// 启动自动补全前的轻量探测：4~5 秒连不上 Pixiv 就跳过这一轮，
+  /// 避免没开代理/VPN 时每次启动都干等 3 个 20 秒超时。
+  static Future<bool> probePixiv(String? proxy) async {
+    final dio = build(proxy);
+    dio.options.connectTimeout = const Duration(seconds: 4);
+    dio.options.receiveTimeout = const Duration(seconds: 5);
+    try {
+      final response = await dio.get<dynamic>(
+        'https://www.pixiv.net/',
+        options: Options(responseType: ResponseType.plain),
+      );
+      return response.statusCode != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// 代理预检：只做 TCP 握手（2 秒），不发 HTTP —— 20 秒超时前就能判生死。
   static Future<String?> probeProxy(String url) async {
     final hostPort = _hostPort(url);
@@ -126,7 +143,8 @@ class PixivClient {
     try {
       json = raw is Map<String, dynamic>
           ? raw
-          : jsonDecode(raw is String ? raw : jsonEncode(raw)) as Map<String, dynamic>;
+          : jsonDecode(raw is String ? raw : jsonEncode(raw))
+                as Map<String, dynamic>;
     } catch (e) {
       return FetchFailed('响应不是合法 JSON: $e');
     }
@@ -150,7 +168,9 @@ class PixivClient {
     final body = raw['body'];
     if (body is! Map) return const _ParseError('响应缺少 body 对象');
     String text(String key) => body[key]?.toString() ?? '';
-    final title = text('illustTitle').isNotEmpty ? text('illustTitle') : text('title');
+    final title = text('illustTitle').isNotEmpty
+        ? text('illustTitle')
+        : text('title');
     if (title.isEmpty && text('userId').isEmpty) {
       return const _ParseError('响应里既没有标题也没有画师，形状可能变了');
     }
@@ -158,7 +178,9 @@ class PixivClient {
     final tagWrapper = body['tags'];
     if (tagWrapper is Map && tagWrapper['tags'] is List) {
       for (final item in tagWrapper['tags'] as List) {
-        if (item is Map && item['tag'] is String && (item['tag'] as String).isNotEmpty) {
+        if (item is Map &&
+            item['tag'] is String &&
+            (item['tag'] as String).isNotEmpty) {
           tags.add(item['tag'] as String);
         }
       }
@@ -181,7 +203,8 @@ class PixivClient {
     );
   }
 
-  static int _int(dynamic value) => value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+  static int _int(dynamic value) =>
+      value is num ? value.toInt() : int.tryParse('$value') ?? 0;
 
   /// 跨语种限流词。宁可误判成限流（保守，会停下来）也不误判成「已删除」。
   static bool looksLikeRateLimit(String message) {
@@ -222,21 +245,25 @@ class PixivClient {
         case FetchFetched(:final meta):
           consecutive = 0;
           fetched++;
-          await repo.storeMeta({
-            'pid': meta.pid,
-            'title': meta.title,
-            'artist_uid': meta.artistUid,
-            'artist_name': meta.artistName,
-            'artist_account': meta.artistAccount,
-            'page_count': meta.pageCount,
-            'x_restrict': meta.xRestrict,
-            'sanity_level': meta.sanityLevel,
-            'illust_type': meta.illustType,
-            'create_date': meta.createDate,
-            'fetched_at': DateTime.now().millisecondsSinceEpoch ~/ 1000,
-            'error': null,
-            'missing': 0,
-          }, meta.tags, aiType: meta.aiType);
+          await repo.storeMeta(
+            {
+              'pid': meta.pid,
+              'title': meta.title,
+              'artist_uid': meta.artistUid,
+              'artist_name': meta.artistName,
+              'artist_account': meta.artistAccount,
+              'page_count': meta.pageCount,
+              'x_restrict': meta.xRestrict,
+              'sanity_level': meta.sanityLevel,
+              'illust_type': meta.illustType,
+              'create_date': meta.createDate,
+              'fetched_at': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+              'error': null,
+              'missing': 0,
+            },
+            meta.tags,
+            aiType: meta.aiType,
+          );
         case FetchMissing():
           consecutive = 0;
           missing++;
@@ -249,8 +276,13 @@ class PixivClient {
           await repo.markFailed(pids[i], '被限流，已中止：$reason');
           onProgress?.call(i + 1, pids.length);
           return MetaBatch(
-            fetched: fetched, missing: missing, failed: failed, lastError: lastError,
-            aborted: true, rateLimited: true, overallDone: overallDone + i + 1,
+            fetched: fetched,
+            missing: missing,
+            failed: failed,
+            lastError: lastError,
+            aborted: true,
+            rateLimited: true,
+            overallDone: overallDone + i + 1,
           );
         case FetchFailed(:final reason):
           consecutive++;
@@ -261,18 +293,29 @@ class PixivClient {
             aborted = true;
             onProgress?.call(i + 1, pids.length);
             return MetaBatch(
-              fetched: fetched, missing: missing, failed: failed, lastError: lastError,
-              aborted: true, overallDone: overallDone + i + 1,
+              fetched: fetched,
+              missing: missing,
+              failed: failed,
+              lastError: lastError,
+              aborted: true,
+              overallDone: overallDone + i + 1,
             );
           }
       }
       onProgress?.call(i + 1, pids.length);
       final soFar = overallDone + i + 1;
-      await Future<void>.delayed(soFar % cooldownEvery == 0 ? cooldown : requestInterval);
+      await Future<void>.delayed(
+        soFar % cooldownEvery == 0 ? cooldown : requestInterval,
+      );
     }
     return MetaBatch(
-      fetched: fetched, missing: missing, failed: failed, lastError: lastError,
-      aborted: aborted, rateLimited: rateLimited, stopped: stopped,
+      fetched: fetched,
+      missing: missing,
+      failed: failed,
+      lastError: lastError,
+      aborted: aborted,
+      rateLimited: rateLimited,
+      stopped: stopped,
       overallDone: overallDone + fetched + missing + failed,
     );
   }

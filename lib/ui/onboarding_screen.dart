@@ -1,16 +1,21 @@
 import 'package:flutter/material.dart';
 
 import '../data/repository.dart';
-import '../media/media_channel.dart';
+import '../media/directory_tree.dart';
 import '../state/app_state.dart';
 import 'brand.dart';
+import 'directory_picker.dart';
 
 /// 首次启动：让用户选图库目录。
 ///
 /// 之前的版本把根写死在 `Pictures/pixez`；现在默认仍是它，但可以换成任意
 /// 内部存储目录（SAF 选择的 tree URI 由原生侧解析成绝对路径）。
 class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({super.key, required this.state, required this.onDone});
+  const OnboardingScreen({
+    super.key,
+    required this.state,
+    required this.onDone,
+  });
 
   final AppState state;
   final Future<void> Function() onDone;
@@ -50,9 +55,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   Future<void> _pick() async {
     if (_busy) return;
-    final picked = await MediaChannel.pickDirectory();
-    if (picked == null) return;
-    await _apply(picked.path, name: picked.name);
+    final path = await showDirectoryPicker(
+      context,
+      initialPath: Repository.phonePictures,
+    );
+    if (path == null || !mounted) return;
+    await _apply(path, name: DirectoryTree.nameOf(path));
   }
 
   @override
@@ -104,7 +112,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     child: const Text(
                       '只会扫描这个目录（含子目录）里的图片，其他相册不动。\n'
                       'pixez 默认下载到 Pictures/pixez；也可以换成自己的文件夹。',
-                      style: TextStyle(fontSize: 12, height: 1.6, color: Colors.white70),
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.6,
+                        color: Colors.white70,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 22),
@@ -113,10 +125,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     child: FilledButton.icon(
                       onPressed: _busy
                           ? null
-                          : () => _apply(
-                                Repository.phonePictures,
-                                name: 'pixez',
-                              ),
+                          : () =>
+                                _apply(Repository.phonePictures, name: 'pixez'),
                       icon: const Icon(Icons.folder_special_outlined),
                       label: const Text('使用默认目录 Pictures/pixez'),
                     ),
@@ -143,7 +153,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     Text(
                       _error!,
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+                      style: TextStyle(
+                        color: theme.colorScheme.error,
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                 ],

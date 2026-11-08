@@ -188,6 +188,8 @@ class _BrowseScreenState extends State<BrowseScreen> {
             return ListTile(
               // 只显示批量补好的头像（fetch=false）：一屏几十行不能逐行联网
               leading: ArtistAvatarView(
+                // dataVersion 变了就换 key：补完头像后不用重启/切 tab
+                key: ValueKey('avatar-${artist.uid}-${widget.state.dataVersion}'),
                 state: widget.state,
                 uid: artist.uid,
                 name: artist.name,

@@ -137,6 +137,9 @@ class _MetaSheetState extends State<_MetaSheet> {
       if (avatars.stopped) summary.write(' · 已停止');
       if (avatars.aborted) summary.write(' · ${avatars.error}');
       setState(() => _message = '$result\n$summary');
+      // 头像文件不是数据库行：分类页/作品库不会自己知道有新图，
+      // 这里 bump 一次，列表按 dataVersion 重建头像。
+      widget.state.bumpData();
     }
 
     if (!mounted) return;

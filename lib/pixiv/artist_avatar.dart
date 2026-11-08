@@ -132,6 +132,43 @@ class ArtistAvatarStore {
   static File _noneMarker(Directory dir, String uid) =>
       File('${dir.path}${Platform.pathSeparator}$uid.none');
 
+  /// `.none` 标记只信任 v2（JSON）。旧版的纯时间戳标记不区分「接口报错」和
+  /// 「真的没头像」，可能把一大批人误标成没有 —— 遇到旧格式直接删掉重试。
+  static const _noneVersion = 2;
+
+  static Future<bool> _hasFreshNone(File marker) async {
+    if (!await marker.exists()) return false;
+    try {
+      final raw = jsonDecode(await marker.readAsString());
+      if (raw is! Map || raw['v'] != _noneVersion) {
+        await marker.delete();
+        return false;
+      }
+      final at = raw['at'];
+      if (at is! num) {
+        await marker.delete();
+        return false;
+      }
+      final when = DateTime.fromMillisecondsSinceEpoch(at.toInt());
+      if (DateTime.now().difference(when) < _refreshAfter) return true;
+      await marker.delete();
+      return false;
+    } catch (_) {
+      try {
+        await marker.delete();
+      } catch (_) {}
+      return false;
+    }
+  }
+
+  static Future<void> _writeNone(File marker) => marker.writeAsString(
+        jsonEncode({
+          'v': _noneVersion,
+          'at': DateTime.now().millisecondsSinceEpoch,
+        }),
+        flush: true,
+      );
+
   /// 已有头像文件的直接拿来用（不判断新旧）；没有返回 null。
   static Future<File?> cached(String uid) async {
     if (!_validUid(uid)) return null;
@@ -157,10 +194,15 @@ class ArtistAvatarStore {
       if (ext != 'img' && ext != 'none') continue;
       final uid = name.substring(0, dot);
       if (!_validUid(uid)) continue;
-      final stat = await entity.stat();
-      if (ext == 'img' && stat.size <= 0) continue;
-      if (anyAge || now.difference(stat.modified) < _refreshAfter) {
-        found.add(uid);
+      if (ext == 'img') {
+        final stat = await entity.stat();
+        if (stat.size <= 0) continue;
+        if (anyAge || now.difference(stat.modified) < _refreshAfter) {
+          found.add(uid);
+        }
+      } else {
+        // 只认 v2 的 `.none`；旧标记会被 _hasFreshNone 删掉，重新排队
+        if (await _hasFreshNone(entity)) found.add(uid);
       }
     }
     return found;
@@ -256,7 +298,7 @@ class ArtistAvatarStore {
   static Future<bool> _hasNoneMarker(String uid) async {
     if (!_validUid(uid)) return false;
     final dir = await _cacheDir();
-    return _noneMarker(dir, uid).exists();
+    return _hasFreshNone(_noneMarker(dir, uid));
   }
 
   /// 先看缓存；没有或过期了才联网。同一 UID 的并发调用共用一个请求。
@@ -293,11 +335,8 @@ class ArtistAvatarStore {
         return file;
       }
     }
-    // 已经确认过「这个画师没有头像」：30 天内不再问
-    if (await marker.exists()) {
-      final stat = await marker.stat();
-      if (DateTime.now().difference(stat.modified) < _refreshAfter) return null;
-    }
+    // 已经确认过「这个画师没有头像」（只认 v2 标记）：30 天内不再问
+    if (await _hasFreshNone(marker)) return null;
 
     final proxy = await repo.setting('pixiv_proxy');
     final lastFailure = _lastFailure;
@@ -328,10 +367,7 @@ class ArtistAvatarStore {
       if (response == null) return fail(_lastNetError ?? '用户接口连接失败');
       if (response.statusCode == 404) {
         // 画师已删号：当作没有头像，别让它挡住后面的批次
-        await marker.writeAsString(
-          '${DateTime.now().millisecondsSinceEpoch}',
-          flush: true,
-        );
+        await _writeNone(marker);
         return null;
       }
       if (response.statusCode != 200) {
@@ -343,13 +379,20 @@ class ArtistAvatarStore {
           : raw is String
               ? jsonDecode(raw)
               : raw;
+      // 接口报错 / 限流页 / 形状变了：算失败，不能写成「没有头像」——
+      // 旧版就是在这里把一大批人误标成无头像的。
+      if (decoded is! Map || decoded['error'] == true) {
+        return fail('用户接口返回错误');
+      }
+      final body = decoded['body'];
+      if (body is! Map) return fail('用户接口响应缺少 body');
+      final identity =
+          body['userId'] ?? body['name'] ?? body['image'] ?? body['imageBig'];
+      if (identity == null) return fail('用户接口响应异常');
       final url = avatarUrlFromUser(decoded);
       if (url == null) {
-        // 接口正常但这个人没有头像：记一笔，增量时直接跳过
-        await marker.writeAsString(
-          '${DateTime.now().millisecondsSinceEpoch}',
-          flush: true,
-        );
+        // 接口正常、也有用户信息，但没有头像字段：这才是真的没有头像
+        await _writeNone(marker);
         return null;
       }
 

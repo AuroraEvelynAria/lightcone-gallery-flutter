@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 import 'db.dart';
@@ -21,10 +23,11 @@ class Repository {
   static const _legacyPicturesRoot = '/storage/emulated/0/Pictures';
 
   /// 当前图库根目录。首次启动由用户选（或直接用默认 pixez），之后可在设置里换。
-  String _libraryRoot = phonePictures;
+  /// 桌面端没有默认目录，必须先在引导页/设置里选。
+  String _libraryRoot = Platform.isAndroid ? phonePictures : '';
   String get libraryRoot => _libraryRoot;
 
-  /// 启动时读一次：设置里的根 → 已有库的路径 → 默认 pixez。
+  /// 启动时读一次：设置里的根 → 已有库的路径 → 默认 pixez（仅 Android）。
   Future<String> loadLibraryRoot() async {
     final saved = await setting('mobile_library_root');
     if (saved != null && saved.trim().isNotEmpty) {
@@ -32,7 +35,7 @@ class Repository {
       return _libraryRoot;
     }
     final libs = await libraries();
-    if (libs.isNotEmpty && libs.first.path.startsWith('/')) {
+    if (libs.isNotEmpty) {
       _libraryRoot = _normalizeRoot(libs.first.path);
     }
     return _libraryRoot;
@@ -46,8 +49,26 @@ class Repository {
     await ensurePhoneLibrary(name: name);
   }
 
-  static String _normalizeRoot(String path) =>
-      path.endsWith('/') ? path.substring(0, path.length - 1) : path;
+  static String _normalizeRoot(String path) {
+    final trimmed = path.trim();
+    if (trimmed.isEmpty) return '';
+    var root = p.normalize(trimmed);
+    while (root.length > 1 && (root.endsWith('/') || root.endsWith('\\'))) {
+      root = root.substring(0, root.length - 1);
+    }
+    return root;
+  }
+
+  /// 行路径是否在当前图库根下（跨平台：Windows 用反斜杠，且大小写不敏感）。
+  bool _isUnderRoot(String path) => _isUnder(_libraryRoot, path);
+
+  static bool _isUnder(String root, String path) {
+    final normalizedRoot = _normalizeRoot(root);
+    if (normalizedRoot.isEmpty) return false;
+    final normalizedPath = p.normalize(path);
+    return p.equals(normalizedRoot, normalizedPath) ||
+        p.isWithin(normalizedRoot, normalizedPath);
+  }
 
   /// 仅演示构建使用（main.dart 里由 `DEMO_ROOT` 控制）：给演示图补几条假元数据，
   /// 让 README 截图有标题 / 画师 / 标签可看。正常构建永远不会调用。
@@ -125,28 +146,85 @@ class Repository {
     await db.execute('ATTACH DATABASE ? AS src', [sourcePath]);
     try {
       await db.transaction((txn) async {
+        // 先补本机没有的 PID；已有的只在来源更新（或本机是失败行）时覆盖。
+        // 手机备份可能比桌面库旧，直接 REPLACE 会把桌面后来补的标题/页面数降级。
         await txn.rawInsert(
-          'INSERT OR REPLACE INTO illust_meta '
+          'INSERT OR IGNORE INTO illust_meta '
           '(pid, title, artist_uid, artist_name, artist_account, page_count, '
           'x_restrict, sanity_level, illust_type, create_date, fetched_at, error, missing) '
           'SELECT pid, title, artist_uid, artist_name, artist_account, page_count, '
           'x_restrict, sanity_level, illust_type, create_date, fetched_at, error, missing '
           'FROM src.illust_meta WHERE error IS NULL OR missing = 1',
         );
+        await txn.rawUpdate(
+          'UPDATE illust_meta SET '
+          'title = (SELECT s.title FROM src.illust_meta s WHERE s.pid = illust_meta.pid), '
+          'artist_uid = (SELECT s.artist_uid FROM src.illust_meta s WHERE s.pid = illust_meta.pid), '
+          'artist_name = (SELECT s.artist_name FROM src.illust_meta s WHERE s.pid = illust_meta.pid), '
+          'artist_account = (SELECT s.artist_account FROM src.illust_meta s WHERE s.pid = illust_meta.pid), '
+          'page_count = (SELECT s.page_count FROM src.illust_meta s WHERE s.pid = illust_meta.pid), '
+          'x_restrict = (SELECT s.x_restrict FROM src.illust_meta s WHERE s.pid = illust_meta.pid), '
+          'sanity_level = (SELECT s.sanity_level FROM src.illust_meta s WHERE s.pid = illust_meta.pid), '
+          'illust_type = (SELECT s.illust_type FROM src.illust_meta s WHERE s.pid = illust_meta.pid), '
+          'create_date = (SELECT s.create_date FROM src.illust_meta s WHERE s.pid = illust_meta.pid), '
+          'fetched_at = (SELECT s.fetched_at FROM src.illust_meta s WHERE s.pid = illust_meta.pid), '
+          'error = (SELECT s.error FROM src.illust_meta s WHERE s.pid = illust_meta.pid), '
+          'missing = (SELECT s.missing FROM src.illust_meta s WHERE s.pid = illust_meta.pid) '
+          'WHERE EXISTS ('
+          'SELECT 1 FROM src.illust_meta s WHERE s.pid = illust_meta.pid '
+          'AND (s.error IS NULL OR s.missing = 1) '
+          'AND (s.fetched_at > illust_meta.fetched_at '
+          'OR (illust_meta.error IS NOT NULL AND illust_meta.missing = 0)))',
+        );
+        // 标签全量导入：可能先导数据包、后扫描目录，标签先存着不碍事。
         await txn.rawInsert(
           'INSERT OR IGNORE INTO illust_tags (pid, tag) '
-          'SELECT pid, tag FROM src.illust_tags '
-          'WHERE pid IN (SELECT pid FROM artworks)',
+          'SELECT pid, tag FROM src.illust_tags',
+        );
+        // 画师表补新 UID，再统一刷新名字（老库里可能还没有这位画师）。
+        await txn.rawInsert(
+          'INSERT OR IGNORE INTO artists (uid, name, created_at) '
+          'SELECT uid, name, ? FROM src.artists',
+          [_now()],
         );
         await txn.rawUpdate(
           'UPDATE artists SET name = '
           '(SELECT s.name FROM src.artists s WHERE s.uid = artists.uid) '
           'WHERE EXISTS (SELECT 1 FROM src.artists s WHERE s.uid = artists.uid)',
         );
-        // 标签画廊（桌面存的组合）：手机端只读，点进去按标签筛
+        // AI 标记不是所有老库都有（Tauri v11 没这张表）：有才合并，
+        // 只升不降，避免用旧备份把已确认的 AI 作品洗回未知。
+        final aiColumns = await txn.rawQuery(
+          'PRAGMA src.table_info(illust_ai)',
+        );
+        if (aiColumns.isNotEmpty) {
+          await txn.rawInsert(
+            'INSERT OR IGNORE INTO illust_ai (pid, ai_type) '
+            'SELECT pid, ai_type FROM src.illust_ai',
+          );
+          await txn.rawUpdate(
+            'UPDATE illust_ai SET ai_type = '
+            '(SELECT MAX(s.ai_type) FROM src.illust_ai s WHERE s.pid = illust_ai.pid) '
+            'WHERE EXISTS (SELECT 1 FROM src.illust_ai s '
+            'WHERE s.pid = illust_ai.pid AND s.ai_type > illust_ai.ai_type)',
+          );
+        }
+        // 标签画廊（桌面存的组合）：手机端只读，点进去按标签筛。
+        // 桌面的库可能还是 v11（没有 match_mode）：有列就搬，没有就按 all=0。
+        final galleryColumns = await txn.rawQuery(
+          'PRAGMA src.table_info(tag_galleries)',
+        );
+        final hasMatchMode = galleryColumns.any(
+          (row) => row['name'] == 'match_mode',
+        );
+        final matchExpr = hasMatchMode
+            ? "CASE WHEN match_mode IN ('any', 1) THEN 'any' ELSE 'all' END"
+            : "'all'";
         await txn.rawInsert(
-          'INSERT OR REPLACE INTO tag_galleries (id, name, tags, rating, created_at) '
-          'SELECT id, name, tags, rating, created_at FROM src.tag_galleries',
+          'INSERT OR REPLACE INTO tag_galleries '
+          '(id, name, tags, rating, match_mode, created_at) '
+          'SELECT id, name, tags, rating, $matchExpr, created_at '
+          'FROM src.tag_galleries',
         );
         // 收藏 / 评分按 PID 合并（桌面的路径是 Windows 的，不能按 path 对）：
         // 手机端是整组状态，取桌面组内最大值。
@@ -155,8 +233,9 @@ class Repository {
           'SELECT 1 FROM src.images s WHERE s.pid = images.pid AND s.is_favorite = 1)',
         );
         await txn.rawUpdate(
-          'UPDATE images SET rating = '
-          '(SELECT MAX(s.rating) FROM src.images s WHERE s.pid = images.pid) '
+          // 取两边最大值：手机备份里的评分可能比桌面低，不能把桌面降级。
+          'UPDATE images SET rating = MAX(images.rating, '
+          '(SELECT MAX(s.rating) FROM src.images s WHERE s.pid = images.pid)) '
           'WHERE pid IS NOT NULL AND EXISTS ('
           'SELECT 1 FROM src.images s WHERE s.pid = images.pid AND s.rating > 0)',
         );
@@ -201,16 +280,28 @@ class Repository {
   /// 的差集会把不在新根下的行删干净。
   Future<LibraryRow> ensurePhoneLibrary({String? name}) async {
     final root = _libraryRoot;
-    final libName =
-        name ?? (root.split('/').last.isEmpty ? '图库' : root.split('/').last);
+    if (root.isEmpty) {
+      throw StateError('还没有选择图库目录');
+    }
+    final base = p.basename(root);
+    final libName = name ?? (base.isEmpty ? '图库' : base);
     // 作品库与图库同口径：只收根目录下的文件。这里清掉历史遗留（别处目录
-    // 下载的 pixiv 命名文件）；Windows 路径的桌面导入行不动 —— 那是等重新
-    // 扫描时按 (pid,page) 更新掉的。
-    await db.delete(
-      'artworks',
-      where: "original_path LIKE '/storage/%' AND original_path NOT LIKE ?",
-      whereArgs: ['$root/%'],
-    );
+    // 下载的 pixiv 命名文件）。
+    if (Platform.isAndroid) {
+      // 手机上只清 `/storage/%` 的旧行；Windows 路径的桌面导入行等重扫时更新。
+      await db.delete(
+        'artworks',
+        where: "original_path LIKE '/storage/%' AND original_path NOT LIKE ?",
+        whereArgs: ['$root${p.separator}%'],
+      );
+    } else {
+      // 桌面库是独立 DB：直接清掉不在当前根下的绝对路径行。
+      await db.delete(
+        'artworks',
+        where: 'original_path NOT LIKE ?',
+        whereArgs: ['$root${p.separator}%'],
+      );
+    }
     final existing = await db.query(
       'libraries',
       where: 'path = ?',
@@ -253,7 +344,7 @@ class Repository {
       await db.delete(
         'images',
         where: 'library_id = ? AND path NOT LIKE ?',
-        whereArgs: [id, '$root/%'],
+        whereArgs: [id, '$root${p.separator}%'],
       );
       return LibraryRow(id, root, libName, r['last_scanned_at'] as int?);
     }
@@ -347,6 +438,7 @@ class Repository {
   Future<List<ArtworkRow>> artworksPage({
     String? artistUid,
     List<String> tags = const [],
+    bool tagsMatchAny = false,
     int xRestrict = -1,
     bool favoriteOnly = false,
     bool aiOnly = false,
@@ -368,9 +460,20 @@ class Repository {
       );
       args.addAll(kAiTags);
     }
-    for (final tag in tags) {
-      clauses.add('a.pid IN (SELECT pid FROM illust_tags WHERE tag = ?)');
-      args.add(tag);
+    if (tags.isNotEmpty) {
+      if (tagsMatchAny) {
+        // 标签图库的 any 语义：命中任意一个标签即可
+        final placeholders = List.filled(tags.length, '?').join(',');
+        clauses.add(
+          'a.pid IN (SELECT pid FROM illust_tags WHERE tag IN ($placeholders))',
+        );
+        args.addAll(tags);
+      } else {
+        for (final tag in tags) {
+          clauses.add('a.pid IN (SELECT pid FROM illust_tags WHERE tag = ?)');
+          args.add(tag);
+        }
+      }
     }
     if (xRestrict >= 0) {
       clauses.add('COALESCE(meta.x_restrict, 0) = ?');
@@ -570,9 +673,9 @@ class Repository {
       '  JOIN artworks a ON a.pid = m.pid WHERE a.artist_uid = ?) AS last_date, '
       '(SELECT name FROM artists WHERE uid = ?) AS artist_name, '
       '(SELECT artist_name FROM illust_meta WHERE artist_uid = ? '
-      '  AND artist_name IS NOT NULL AND artist_name != "" LIMIT 1) AS meta_name, '
+      '  AND artist_name IS NOT NULL AND artist_name != \'\' LIMIT 1) AS meta_name, '
       '(SELECT artist_account FROM illust_meta WHERE artist_uid = ? '
-      '  AND artist_account IS NOT NULL AND artist_account != "" LIMIT 1) AS meta_account',
+      '  AND artist_account IS NOT NULL AND artist_account != \'\' LIMIT 1) AS meta_account',
       [uid, uid, uid, uid, uid, uid, uid, uid, uid],
     )).first;
     final tags = await db.rawQuery(
@@ -623,7 +726,7 @@ class Repository {
   Future<List<String>> artistUidsWithArtworks() async {
     final rows = await db.rawQuery(
       'SELECT artist_uid, COUNT(*) c FROM artworks '
-      'WHERE artist_uid IS NOT NULL AND artist_uid != "" '
+      'WHERE artist_uid IS NOT NULL AND artist_uid != \'\' '
       'GROUP BY artist_uid ORDER BY c DESC',
     );
     return rows.map((r) => r['artist_uid'] as String).toList();
@@ -672,6 +775,180 @@ class Repository {
 
   Future<void> clearIgnored() => db.delete('ignored_artworks');
 
+  /// 导出「元数据包」：一个独立 SQLite 文件，只含元数据/标签/画师/AI/
+  /// 收藏评分/标签画廊，不含图片路径与原图 —— Android ↔ Windows 直接互传。
+  Future<void> exportMetadataPack(String targetPath) async {
+    final file = File(targetPath);
+    if (await file.exists()) await file.delete();
+    await db.execute('ATTACH DATABASE ? AS pack', [targetPath]);
+    try {
+      await db.execute(
+        'CREATE TABLE pack.pack_meta ('
+        'format TEXT NOT NULL, version INTEGER NOT NULL, '
+        'exported_at INTEGER NOT NULL, platform TEXT)',
+      );
+      await db.rawInsert(
+        'INSERT INTO pack.pack_meta (format, version, exported_at, platform) '
+        'VALUES (?, ?, ?, ?)',
+        ['lightcone-meta', 1, _now(), Platform.operatingSystem],
+      );
+      await db.execute(
+        'CREATE TABLE pack.illust_meta AS '
+        'SELECT pid, title, artist_uid, artist_name, artist_account, '
+        'page_count, x_restrict, sanity_level, illust_type, create_date, '
+        'fetched_at, error, missing FROM main.illust_meta '
+        'WHERE error IS NULL OR missing = 1',
+      );
+      await db.execute(
+        'CREATE TABLE pack.illust_tags AS '
+        'SELECT t.pid, t.tag FROM main.illust_tags t '
+        'JOIN pack.illust_meta m ON m.pid = t.pid',
+      );
+      await db.execute(
+        'CREATE TABLE pack.artists AS SELECT uid, name FROM main.artists',
+      );
+      await db.execute(
+        'CREATE TABLE pack.illust_ai AS SELECT pid, ai_type FROM main.illust_ai',
+      );
+      await db.execute(
+        'CREATE TABLE pack.favorites AS '
+        'SELECT pid, MAX(is_favorite) AS is_favorite, MAX(rating) AS rating '
+        'FROM main.images WHERE pid IS NOT NULL GROUP BY pid',
+      );
+      await db.execute(
+        'CREATE TABLE pack.tag_galleries AS '
+        'SELECT id, name, tags, rating, match_mode, created_at '
+        'FROM main.tag_galleries',
+      );
+      await db.execute('PRAGMA pack.user_version = 1');
+    } finally {
+      await db.execute('DETACH DATABASE pack');
+    }
+  }
+
+  /// 导入「元数据包」：合并到本机，不改 artworks/images 的路径索引。
+  Future<Map<String, int>> importMetadataPack(String sourcePath) async {
+    if (!await File(sourcePath).exists()) {
+      throw StateError('元数据包不存在');
+    }
+    await db.execute('ATTACH DATABASE ? AS pack', [sourcePath]);
+    try {
+      final meta = await db.rawQuery(
+        'SELECT format, version FROM pack.pack_meta LIMIT 1',
+      );
+      if (meta.isEmpty ||
+          meta.first['format'] != 'lightcone-meta' ||
+          (meta.first['version'] as int?) != 1) {
+        throw StateError('不是 LightCone 元数据包（版本不支持）');
+      }
+
+      final metaCount =
+          ((await db.rawQuery('SELECT COUNT(*) c FROM pack.illust_meta'))
+                  .first['c']
+              as int?) ??
+          0;
+      final tagCount =
+          ((await db.rawQuery('SELECT COUNT(*) c FROM pack.illust_tags'))
+                  .first['c']
+              as int?) ??
+          0;
+      final aiCount =
+          ((await db.rawQuery('SELECT COUNT(*) c FROM pack.illust_ai'))
+                  .first['c']
+              as int?) ??
+          0;
+      final favoriteCount =
+          ((await db.rawQuery('SELECT COUNT(*) c FROM pack.favorites'))
+                  .first['c']
+              as int?) ??
+          0;
+      final galleryCount =
+          ((await db.rawQuery('SELECT COUNT(*) c FROM pack.tag_galleries'))
+                  .first['c']
+              as int?) ??
+          0;
+
+      await db.transaction((txn) async {
+        // 和整库导入同一套合并规则：新 PID 直接补，已有 PID 只接受更新的数据。
+        await txn.rawInsert(
+          'INSERT OR IGNORE INTO illust_meta '
+          '(pid, title, artist_uid, artist_name, artist_account, page_count, '
+          'x_restrict, sanity_level, illust_type, create_date, fetched_at, error, missing) '
+          'SELECT pid, title, artist_uid, artist_name, artist_account, page_count, '
+          'x_restrict, sanity_level, illust_type, create_date, fetched_at, error, missing '
+          'FROM pack.illust_meta',
+        );
+        await txn.rawUpdate(
+          'UPDATE illust_meta SET '
+          'title = (SELECT p.title FROM pack.illust_meta p WHERE p.pid = illust_meta.pid), '
+          'artist_uid = (SELECT p.artist_uid FROM pack.illust_meta p WHERE p.pid = illust_meta.pid), '
+          'artist_name = (SELECT p.artist_name FROM pack.illust_meta p WHERE p.pid = illust_meta.pid), '
+          'artist_account = (SELECT p.artist_account FROM pack.illust_meta p WHERE p.pid = illust_meta.pid), '
+          'page_count = (SELECT p.page_count FROM pack.illust_meta p WHERE p.pid = illust_meta.pid), '
+          'x_restrict = (SELECT p.x_restrict FROM pack.illust_meta p WHERE p.pid = illust_meta.pid), '
+          'sanity_level = (SELECT p.sanity_level FROM pack.illust_meta p WHERE p.pid = illust_meta.pid), '
+          'illust_type = (SELECT p.illust_type FROM pack.illust_meta p WHERE p.pid = illust_meta.pid), '
+          'create_date = (SELECT p.create_date FROM pack.illust_meta p WHERE p.pid = illust_meta.pid), '
+          'fetched_at = (SELECT p.fetched_at FROM pack.illust_meta p WHERE p.pid = illust_meta.pid), '
+          'error = (SELECT p.error FROM pack.illust_meta p WHERE p.pid = illust_meta.pid), '
+          'missing = (SELECT p.missing FROM pack.illust_meta p WHERE p.pid = illust_meta.pid) '
+          'WHERE EXISTS ('
+          'SELECT 1 FROM pack.illust_meta p WHERE p.pid = illust_meta.pid '
+          'AND p.fetched_at > illust_meta.fetched_at)',
+        );
+        await txn.rawInsert(
+          'INSERT OR IGNORE INTO illust_tags (pid, tag) '
+          'SELECT pid, tag FROM pack.illust_tags',
+        );
+        await txn.rawInsert(
+          'INSERT OR IGNORE INTO artists (uid, name, created_at) '
+          'SELECT uid, name, ? FROM pack.artists',
+          [_now()],
+        );
+        await txn.rawUpdate(
+          'UPDATE artists SET name = '
+          '(SELECT p.name FROM pack.artists p WHERE p.uid = artists.uid) '
+          'WHERE EXISTS (SELECT 1 FROM pack.artists p WHERE p.uid = artists.uid)',
+        );
+        await txn.rawInsert(
+          'INSERT OR IGNORE INTO illust_ai (pid, ai_type) '
+          'SELECT pid, ai_type FROM pack.illust_ai',
+        );
+        await txn.rawUpdate(
+          'UPDATE illust_ai SET ai_type = '
+          '(SELECT MAX(p.ai_type) FROM pack.illust_ai p WHERE p.pid = illust_ai.pid) '
+          'WHERE EXISTS (SELECT 1 FROM pack.illust_ai p '
+          'WHERE p.pid = illust_ai.pid AND p.ai_type > illust_ai.ai_type)',
+        );
+        await txn.rawUpdate(
+          'UPDATE images SET is_favorite = 1 WHERE pid IS NOT NULL AND EXISTS ('
+          'SELECT 1 FROM pack.favorites f WHERE f.pid = images.pid AND f.is_favorite = 1)',
+        );
+        await txn.rawUpdate(
+          'UPDATE images SET rating = MAX(images.rating, '
+          '(SELECT MAX(f.rating) FROM pack.favorites f WHERE f.pid = images.pid)) '
+          'WHERE pid IS NOT NULL AND EXISTS ('
+          'SELECT 1 FROM pack.favorites f WHERE f.pid = images.pid AND f.rating > 0)',
+        );
+        await txn.rawInsert(
+          'INSERT OR REPLACE INTO tag_galleries '
+          '(id, name, tags, rating, match_mode, created_at) '
+          'SELECT id, name, tags, rating, match_mode, created_at '
+          'FROM pack.tag_galleries',
+        );
+      });
+      return {
+        'meta': metaCount,
+        'tags': tagCount,
+        'ai': aiCount,
+        'favorites': favoriteCount,
+        'galleries': galleryCount,
+      };
+    } finally {
+      await db.execute('DETACH DATABASE pack');
+    }
+  }
+
   /// 桌面端保存的标签画廊（tag_galleries）：手机端只读，点进去用标签筛作品。
   Future<List<TagGalleryRow>> tagGalleries() async {
     final rows = await db.query('tag_galleries', orderBy: 'id');
@@ -683,15 +960,58 @@ class Repository {
       } catch (_) {
         // 桌面写入的是 JSON 数组；解析失败就当空画廊，不影响其他条目
       }
+      final rawMode = r['match_mode'];
+      final matchMode = rawMode is String && rawMode.isNotEmpty
+          ? rawMode
+          : 'all';
       return TagGalleryRow(
         id: r['id'] as int,
         name: r['name'] as String,
         tags: tags,
         rating: (r['rating'] as int?) ?? -1,
-        matchMode: (r['match_mode'] as String?) ?? 'all',
+        matchMode: matchMode,
       );
     }).toList();
   }
+
+  /// Windows 桌面端的画廊编辑：Android 1.0.0 只读，桌面保留增删改。
+  Future<int> createTagGallery({
+    required String name,
+    required List<String> tags,
+    String matchMode = 'all',
+    int rating = -1,
+  }) {
+    return db.insert('tag_galleries', {
+      'name': name.trim(),
+      'tags': jsonEncode(tags),
+      'rating': rating,
+      'match_mode': matchMode == 'any' ? 'any' : 'all',
+      'created_at': _now(),
+    });
+  }
+
+  Future<void> updateTagGallery(
+    int id, {
+    required String name,
+    required List<String> tags,
+    required String matchMode,
+    int rating = -1,
+  }) {
+    return db.update(
+      'tag_galleries',
+      {
+        'name': name.trim(),
+        'tags': jsonEncode(tags),
+        'rating': rating,
+        'match_mode': matchMode == 'any' ? 'any' : 'all',
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> deleteTagGallery(int id) =>
+      db.delete('tag_galleries', where: 'id = ?', whereArgs: [id]);
 
   // ---------------------------------------------------------------- 检索
 
@@ -777,14 +1097,14 @@ class Repository {
 
     for (final row in rows) {
       // 作品库与图库同口径：只认当前根目录下的文件。
-      if (!row.path.startsWith('$_libraryRoot/')) continue;
+      if (!_isUnderRoot(row.path)) continue;
       final parsed = parsePid(row.name);
       if (parsed == null) continue;
       matched++;
       final (pid, page) = parsed;
       final key = '$pid:$page';
-      final slash = row.path.lastIndexOf('/');
-      if (slash > 0) roots.add(row.path.substring(0, slash));
+      final parent = p.dirname(row.path);
+      if (parent != row.path) roots.add(parent);
       if (ignored.contains(key)) {
         ignoredCount++;
         continue;
@@ -874,12 +1194,15 @@ class Repository {
         'WHERE artist_uid IS NULL AND EXISTS ('
         'SELECT 1 FROM illust_meta m WHERE m.pid = artworks.pid AND m.artist_uid IS NOT NULL)',
       );
-      // 缩略图映射：一次扫描顺带把全机 path→id 更新到最新
-      for (final row in rows) {
-        batch.insert('media_ids', {
-          'path': row.path,
-          'media_id': row.id,
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      // 缩略图映射：一次扫描顺带把全机 path→id 更新到最新。
+      // Windows 没有 MediaStore，不写 media_ids，让 UI 直接走文件解码。
+      if (Platform.isAndroid) {
+        for (final row in rows) {
+          batch.insert('media_ids', {
+            'path': row.path,
+            'media_id': row.id,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
       }
       await batch.commit(noResult: true);
     });
@@ -899,14 +1222,9 @@ class Repository {
     LibraryRow library,
     List<MediaImageDto> allRows,
   ) async {
-    if (!library.path.startsWith('/')) {
-      // 桌面导入的库是 Windows 路径，手机上不存在 —— 跳过不报错
-      return ScanSummary(0, 0, 0, 0, 0, 0);
-    }
-    final root = library.path.endsWith('/')
-        ? library.path.substring(0, library.path.length - 1)
-        : library.path;
-    final rows = allRows.where((r) => r.path.startsWith('$root/')).toList();
+    final root = _normalizeRoot(library.path);
+    if (root.isEmpty) return ScanSummary(0, 0, 0, 0, 0, 0);
+    final rows = allRows.where((r) => _isUnder(root, r.path)).toList();
     if (rows.isEmpty) return ScanSummary(0, 0, 0, 0, 0, 0);
 
     final now = _now();
@@ -994,11 +1312,13 @@ class Repository {
           whereArgs: [library.id, path],
         );
       }
-      for (final row in rows) {
-        batch.insert('media_ids', {
-          'path': row.path,
-          'media_id': row.id,
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      if (Platform.isAndroid) {
+        for (final row in rows) {
+          batch.insert('media_ids', {
+            'path': row.path,
+            'media_id': row.id,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
       }
       batch.update(
         'libraries',
@@ -1088,6 +1408,23 @@ class Repository {
       favorites: read('favorites'),
       ignored: read('ignored'),
     );
+  }
+
+  /// 已入库图片的 size/mtime/宽高快照，给桌面扫描跳过没变文件的图片头读取。
+  Future<Map<String, KnownImageSize>> imageSizeHints() async {
+    final rows = await db.query(
+      'images',
+      columns: ['path', 'file_size', 'modified_at', 'width', 'height'],
+    );
+    return {
+      for (final row in rows)
+        row['path'] as String: KnownImageSize(
+          size: (row['file_size'] as int?) ?? 0,
+          modified: (row['modified_at'] as int?) ?? 0,
+          width: (row['width'] as int?) ?? 0,
+          height: (row['height'] as int?) ?? 0,
+        ),
+    };
   }
 
   Future<String?> setting(String key) async {

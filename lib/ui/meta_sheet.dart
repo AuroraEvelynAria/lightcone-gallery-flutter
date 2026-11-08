@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../pixiv/artist_avatar.dart';
@@ -259,8 +261,10 @@ class _MetaSheetState extends State<_MetaSheet> {
             const SizedBox(height: 4),
             // 桌面的 127.0.0.1 在手机上指向手机自己 —— 必须提醒。
             Text(
-              '提示：127.0.0.1 在手机上无效（会按直连处理）；要用电脑代理请填电脑局域网 IP，'
-              '并确保代理软件允许局域网连接',
+              Platform.isAndroid
+                  ? '提示：127.0.0.1 在手机上无效（会按直连处理）；'
+                        '要用电脑代理请填电脑局域网 IP，并确保代理软件允许局域网连接'
+                  : '提示：桌面端可直接填本机代理，例如 http://127.0.0.1:7897',
               style: Theme.of(context).textTheme.labelSmall,
             ),
             if (_message != null) ...[

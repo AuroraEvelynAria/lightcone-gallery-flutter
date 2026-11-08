@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'data/db.dart';
 import 'data/repository.dart';
@@ -12,9 +15,14 @@ import 'ui/splash_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // 桌面端 sqflite 没有原生实现，统一走 FFI + 随包的 sqlite3。
+  if (!Platform.isAndroid) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
   // 预览构建：隐藏通知栏与手势条，截图里不出现系统 UI。
   // （MIUI 的 policy_control 对这个窗口不生效，只能从 App 侧 immersive。）
-  if (const bool.fromEnvironment('DEMO_PREVIEW')) {
+  if (Platform.isAndroid && const bool.fromEnvironment('DEMO_PREVIEW')) {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
   // 第一帧立刻出开屏：开库 / 迁移 / 读设置都在开屏背后跑。
@@ -188,12 +196,26 @@ ThemeData _theme(Brightness brightness, ThemePalette palette) {
         ? palette.darkSurface
         : const Color(0xFFF7F8FC),
   );
-  return ThemeData(
+  final base = ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
     scaffoldBackgroundColor: scheme.surface,
     splashFactory: InkSparkle.splashFactory,
     visualDensity: VisualDensity.standard,
+  );
+  if (!Platform.isWindows) return base;
+  // Windows 默认的 Roboto/Segoe UI 对中文会落到不同的系统回退字体，
+  // 同一段文字里中英混排容易粗细不一致。桌面统一用雅黑系。
+  const fallback = ['Microsoft YaHei', 'Segoe UI', 'Segoe UI Emoji'];
+  return base.copyWith(
+    textTheme: base.textTheme.apply(
+      fontFamily: 'Microsoft YaHei UI',
+      fontFamilyFallback: fallback,
+    ),
+    primaryTextTheme: base.primaryTextTheme.apply(
+      fontFamily: 'Microsoft YaHei UI',
+      fontFamilyFallback: fallback,
+    ),
   );
 }
 

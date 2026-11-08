@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:sqflite/sqflite.dart' show getDatabasesPath;
 
 import '../data/db.dart';
 import '../data/repository.dart';
@@ -50,10 +49,13 @@ class AppState extends ChangeNotifier {
       if (!hasPermission) return '没有图片权限，无法扫描';
     }
     scanning = true;
-    scanMessage = '读取 MediaStore…';
+    scanMessage = Platform.isAndroid ? '读取 MediaStore…' : '读取图库目录…';
     notifyListeners();
     try {
-      final rows = await MediaChannel.listImages();
+      final root = repo.libraryRoot;
+      if (root.isEmpty) return '还没有选择图库目录';
+      final known = await repo.imageSizeHints();
+      final rows = await MediaChannel.listImages(root: root, known: known);
       scanMessage = '入库（${rows.length} 张）…';
       notifyListeners();
       final artworks = await repo.scanArtworks(rows);
@@ -114,9 +116,10 @@ class AppState extends ChangeNotifier {
   ///
   /// 不用 `VACUUM INTO`：Android 8 的 SQLite 才 3.19，没有那条语法（3.27 才有）。
   Future<String> exportBackup() async {
-    final dir = await getDatabasesPath();
     final stamp = DateTime.now();
-    final temp = File('$dir/export-${stamp.millisecondsSinceEpoch}.db');
+    final temp = File(
+      '${Directory.systemTemp.path}/export-${stamp.millisecondsSinceEpoch}.db',
+    );
     try {
       await repo.db.execute('PRAGMA wal_checkpoint(FULL)');
       await File(repo.db.path).copy(temp.path);
@@ -138,6 +141,52 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 导出「元数据包」：双端互传，不含原图与索引路径。
+  Future<String> exportMetadataPack() async {
+    final stamp = DateTime.now();
+    final temp = File(
+      '${Directory.systemTemp.path}/lightcone-meta-'
+      '${stamp.millisecondsSinceEpoch}.db',
+    );
+    try {
+      await repo.exportMetadataPack(temp.path);
+      final date =
+          '${stamp.year}'
+          '${stamp.month.toString().padLeft(2, '0')}'
+          '${stamp.day.toString().padLeft(2, '0')}';
+      final saved = await MediaChannel.exportBackup(
+        temp.path,
+        'lightcone-meta-$date.db',
+      );
+      return saved == null ? '已取消导出' : '已导出元数据包（$saved）';
+    } catch (e) {
+      return '导出元数据包失败：$e';
+    } finally {
+      try {
+        await temp.delete();
+      } catch (_) {}
+    }
+  }
+
+  /// 导入另一端导出的元数据包：只合并元数据，不动本机索引。
+  Future<String> importMetadataPack() async {
+    final path = await MediaChannel.pickBackup();
+    if (path == null) return '已取消';
+    try {
+      final result = await repo.importMetadataPack(path);
+      bumpData();
+      return '元数据包导入完成：元数据 ${result['meta']} · 标签 ${result['tags']} · '
+          'AI 标记 ${result['ai']} · 收藏/评分 ${result['favorites']} · '
+          '画廊 ${result['galleries']}';
+    } catch (e) {
+      return '导入元数据包失败：$e';
+    } finally {
+      try {
+        await File(path).delete();
+      } catch (_) {}
+    }
+  }
+
   /// 补全元数据：一批接一批跑，直到没有待补全 / 叫停 / 撞限流。
   /// [maxCount] 用于启动自动补全 —— 只跑一小批，别让用户等一小时。
   Future<String> fetchMeta({
@@ -149,9 +198,11 @@ class AppState extends ChangeNotifier {
     if (_metaBusy) return '正在补全，请稍候';
     _metaBusy = true;
     try {
-      // build 内部会把桌面回环地址规范化为「不走代理」
+      // build 内部会把桌面回环地址规范化为「不走代理」；这里再预检一次，
+      // 代理握手失败时自动切直连（桌面 TUN 场景）。
       final proxy = await repo.setting('pixiv_proxy');
-      final dio = PixivClient.build(proxy);
+      final effective = await PixivClient.resolveProxy(proxy);
+      final dio = PixivClient.build(effective);
       var done = 0;
       var fetched = 0, failed = 0;
       String? lastError;
@@ -194,7 +245,8 @@ class AppState extends ChangeNotifier {
     final pending = await repo.pendingMetaCount();
     if (pending == 0) return null;
     final proxy = await repo.setting('pixiv_proxy');
-    if (!await PixivClient.probePixiv(proxy)) {
+    final effective = await PixivClient.resolveProxy(proxy);
+    if (effective != null && !await PixivClient.probePixiv(effective)) {
       return '检测到 $pending 部作品缺元数据，暂时连不上 Pixiv（联网后可手动补全）';
     }
     var fetched = 0;
@@ -225,7 +277,8 @@ class AppState extends ChangeNotifier {
     final total = await repo.pendingAiCount();
     if (total == 0) return 'AI 标记已经是全的';
     final proxy = await repo.setting('pixiv_proxy');
-    final dio = PixivClient.build(proxy);
+    final effective = await PixivClient.resolveProxy(proxy);
+    final dio = PixivClient.build(effective);
     var done = 0, fetched = 0, missing = 0, failed = 0, consecutive = 0;
     var stopped = false;
     String? lastError;

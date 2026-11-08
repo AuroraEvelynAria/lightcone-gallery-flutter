@@ -121,7 +121,9 @@ class ArtistAvatarStore {
     final cached = _dir;
     if (cached != null) return cached;
     final base = await getApplicationSupportDirectory();
-    final dir = Directory('${base.path}${Platform.pathSeparator}artist_avatars');
+    final dir = Directory(
+      '${base.path}${Platform.pathSeparator}artist_avatars',
+    );
     if (!await dir.exists()) await dir.create(recursive: true);
     return _dir = dir;
   }
@@ -162,12 +164,12 @@ class ArtistAvatarStore {
   }
 
   static Future<void> _writeNone(File marker) => marker.writeAsString(
-        jsonEncode({
-          'v': _noneVersion,
-          'at': DateTime.now().millisecondsSinceEpoch,
-        }),
-        flush: true,
-      );
+    jsonEncode({
+      'v': _noneVersion,
+      'at': DateTime.now().millisecondsSinceEpoch,
+    }),
+    flush: true,
+  );
 
   /// 已有头像文件的直接拿来用（不判断新旧）；没有返回 null。
   static Future<File?> cached(String uid) async {
@@ -255,7 +257,8 @@ class ArtistAvatarStore {
       if (consecutive >= 5) {
         aborted = true;
         final reason = (_lastError ?? '').trim();
-        error = '连续 $consecutive 个画师都失败'
+        error =
+            '连续 $consecutive 个画师都失败'
             '${reason.isEmpty ? '' : '（$reason）'}，已停';
         break;
       }
@@ -282,10 +285,7 @@ class ArtistAvatarStore {
   }
 
   /// 每 100ms 查一次停止，别让「停止」在 30s 的冷却里干等。
-  static Future<void> _sleep(
-    Duration total,
-    bool Function() watchStop,
-  ) async {
+  static Future<void> _sleep(Duration total, bool Function() watchStop) async {
     var left = total.inMilliseconds;
     while (left > 0) {
       if (watchStop()) return;
@@ -331,7 +331,8 @@ class ArtistAvatarStore {
     final exists = await file.exists();
     if (exists) {
       final stat = await file.stat();
-      if (stat.size > 0 && DateTime.now().difference(stat.modified) < _refreshAfter) {
+      if (stat.size > 0 &&
+          DateTime.now().difference(stat.modified) < _refreshAfter) {
         return file;
       }
     }
@@ -359,7 +360,7 @@ class ArtistAvatarStore {
     }
 
     try {
-      final dio = PixivClient.build(proxy);
+      final dio = PixivClient.build(await PixivClient.resolveProxy(proxy));
       final response = await _getWithRetry<dynamic>(
         dio,
         'https://www.pixiv.net/ajax/user/$uid?full=1&lang=zh',
@@ -377,8 +378,8 @@ class ArtistAvatarStore {
       final decoded = raw is Map<String, dynamic>
           ? raw
           : raw is String
-              ? jsonDecode(raw)
-              : raw;
+          ? jsonDecode(raw)
+          : raw;
       // 接口报错 / 限流页 / 形状变了：算失败，不能写成「没有头像」——
       // 旧版就是在这里把一大批人误标成无头像的。
       if (decoded is! Map || decoded['error'] == true) {

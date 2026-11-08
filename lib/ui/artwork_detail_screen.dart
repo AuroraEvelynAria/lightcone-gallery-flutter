@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 
 import '../data/models.dart';
 import '../media/media_channel.dart';
@@ -120,13 +121,13 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
       if (updated == 0) _rating = previous;
     });
     if (updated == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('这张不在图库里，评分只对图库图片生效')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('这张不在图库里，评分只对图库图片生效')));
     }
   }
 
-  Future<void> _toggleFavorite() async {    if (_busyFavorite) return;
+  Future<void> _toggleFavorite() async {
+    if (_busyFavorite) return;
     final previous = _favorite;
     final next = !_favorite;
     setState(() {
@@ -141,9 +142,8 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
       if (updated == 0) _favorite = previous;
     });
     if (updated == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('这张不在图库里，收藏只对图库图片生效')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('这张不在图库里，收藏只对图库图片生效')));
       return;
     }
     widget.onFavoriteChanged?.call(next);
@@ -154,9 +154,8 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
       'https://www.pixiv.net/artworks/${widget.pid}',
     );
     if (!mounted || ok) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('没有可以打开链接的应用')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('没有可以打开链接的应用')));
   }
 
   /// 分享整个作品：多页会一次带上（ACTION_SEND_MULTIPLE）。
@@ -170,16 +169,15 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
       asFile: asFile,
     );
     if (!mounted || ok) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('分享失败：没有可用的应用或文件不存在')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('分享失败：没有可用的应用或文件不存在')));
   }
 
   /// 把作品的每一页原图存进相册 Pictures/LightCone。
   Future<void> _saveToGallery(ArtworkDetail detail) async {
     var saved = 0;
     for (final page in detail.pages) {
-      final name = page.originalPath.split('/').last;
+      final name = p.basename(page.originalPath);
       if (await MediaChannel.saveToGallery(page.originalPath, name: name)) {
         saved++;
       }
@@ -189,7 +187,9 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
       SnackBar(
         content: Text(
           saved == detail.pages.length
-              ? '已保存 $saved 张到相册 Pictures/LightCone'
+              ? (Platform.isWindows
+                    ? '已保存 $saved 张到 Pictures\\LightCone'
+                    : '已保存 $saved 张到相册 Pictures/LightCone')
               : '保存了 $saved / ${detail.pages.length} 张',
         ),
       ),
@@ -202,17 +202,15 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
       target: target,
     );
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(ok ? '已设为壁纸' : '设置壁纸失败')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(ok ? '已设为壁纸' : '设置壁纸失败')));
   }
 
   Future<void> _copyPid() async {
     await Clipboard.setData(ClipboardData(text: widget.pid));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已复制 PID ${widget.pid}')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('已复制 PID ${widget.pid}')));
   }
 
   Future<void> _removeFromLibrary(ArtworkDetail detail) async {
@@ -246,11 +244,13 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
 
   void _openViewer(ArtworkDetail detail, int index) {
     final items = detail.pages
-        .map((p) => ViewerItem(
-              path: p.originalPath,
-              title: p.title?.isNotEmpty == true ? p.title! : 'PID ${p.pid}',
-              aspectRatio: p.aspectRatio,
-            ))
+        .map(
+          (p) => ViewerItem(
+            path: p.originalPath,
+            title: p.title?.isNotEmpty == true ? p.title! : 'PID ${p.pid}',
+            aspectRatio: p.aspectRatio,
+          ),
+        )
         .toList(growable: false);
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -277,11 +277,20 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
         title: null,
         actions: [
           if (detail != null && detail.pages.isNotEmpty) ...[
-            IconButton(
-              icon: const Icon(Icons.share_outlined),
-              tooltip: '分享',
-              onPressed: () => _shareAll(detail),
-            ),
+            if (!Platform.isWindows)
+              IconButton(
+                icon: const Icon(Icons.share_outlined),
+                tooltip: '分享',
+                onPressed: () => _shareAll(detail),
+              ),
+            if (Platform.isWindows)
+              IconButton(
+                icon: const Icon(Icons.folder_open_outlined),
+                tooltip: '在资源管理器中显示',
+                onPressed: () => MediaChannel.revealInExplorer(
+                  detail.pages.map((page) => page.originalPath).toList(),
+                ),
+              ),
             PopupMenuButton<String>(
               onSelected: (value) {
                 switch (value) {
@@ -291,23 +300,51 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
                     _setWallpaper(detail, 'home');
                   case 'wall-lock':
                     _setWallpaper(detail, 'lock');
-                case 'wall-both':
-                  _setWallpaper(detail, 'both');
-                case 'share-file':
-                  _shareAll(detail, asFile: true);
-                case 'save':
-                  _saveToGallery(detail);
+                  case 'wall-both':
+                    _setWallpaper(detail, 'both');
+                  case 'share-file':
+                    _shareAll(detail, asFile: true);
+                  case 'save':
+                    _saveToGallery(detail);
+                  case 'reveal':
+                    MediaChannel.revealInExplorer(
+                      detail.pages.map((page) => page.originalPath).toList(),
+                    );
                 }
               },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'wall-home', child: Text('设为壁纸（主屏）')),
-                PopupMenuItem(value: 'wall-lock', child: Text('设为壁纸（锁屏）')),
-                PopupMenuItem(value: 'wall-both', child: Text('设为壁纸（主屏 + 锁屏）')),
-                PopupMenuDivider(),
-                PopupMenuItem(value: 'share-file', child: Text('以文件分享（不压缩）')),
-                PopupMenuItem(value: 'save', child: Text('保存原图到相册')),
-                PopupMenuDivider(),
-                PopupMenuItem(value: 'remove', child: Text('移出作品库')),
+              itemBuilder: (_) => [
+                if (!Platform.isWindows) ...[
+                  const PopupMenuItem(
+                    value: 'wall-home',
+                    child: Text('设为壁纸（主屏）'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'wall-lock',
+                    child: Text('设为壁纸（锁屏）'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'wall-both',
+                    child: Text('设为壁纸（主屏 + 锁屏）'),
+                  ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem(
+                    value: 'share-file',
+                    child: Text('以文件分享（不压缩）'),
+                  ),
+                ],
+                if (Platform.isWindows)
+                  const PopupMenuItem(
+                    value: 'reveal',
+                    child: Text('在资源管理器中显示'),
+                  ),
+                PopupMenuItem(
+                  value: 'save',
+                  child: Text(
+                    Platform.isWindows ? '保存全部原图到 Pictures' : '保存原图到相册',
+                  ),
+                ),
+                const PopupMenuDivider(),
+                const PopupMenuItem(value: 'remove', child: Text('移出作品库')),
               ],
             ),
           ],
@@ -316,25 +353,60 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? _ErrorBody(error: _error!)
-              : detail == null
-                  ? const SizedBox.shrink()
-                  : CustomScrollView(
+          ? _ErrorBody(error: _error!)
+          : detail == null
+          ? const SizedBox.shrink()
+          : (Platform.isWindows && detail.pages.isNotEmpty)
+          ? Row(
+              children: [
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => CustomScrollView(
                       controller: _scroll,
                       slivers: [
-                        // 图片顶在最上面（主人要求）；标题/画师在顶栏一直可见，
-                        // 完整信息在长图之后。
-                        if (detail.pages.isEmpty)
-                          SliverToBoxAdapter(
-                            child: _MissingBody(onOpenPixiv: _openPixiv),
-                          )
-                        else
-                          _buildStrip(detail),
-                        SliverToBoxAdapter(child: _buildInfo(detail)),
+                        _buildStrip(detail, width: constraints.maxWidth),
                       ],
                     ),
-      // 长图可能几十页：动作放常驻底栏，滚到哪都能点
-      bottomNavigationBar: detail == null || detail.pages.isEmpty
+                  ),
+                ),
+                const VerticalDivider(width: 1),
+                SizedBox(
+                  width: 380,
+                  child: SingleChildScrollView(
+                    // 详情是沉浸式顶栏：右侧信息别钻到 AppBar 下面。
+                    padding: EdgeInsets.only(
+                      top:
+                          MediaQuery.paddingOf(context).top +
+                          kToolbarHeight +
+                          8,
+                    ),
+                    child: _buildInfo(detail),
+                  ),
+                ),
+              ],
+            )
+          : Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1100),
+                child: CustomScrollView(
+                  controller: _scroll,
+                  slivers: [
+                    // 图片顶在最上面（主人要求）；标题/画师在顶栏一直可见，
+                    // 完整信息在长图之后。
+                    if (detail.pages.isEmpty)
+                      SliverToBoxAdapter(
+                        child: _MissingBody(onOpenPixiv: _openPixiv),
+                      )
+                    else
+                      _buildStrip(detail),
+                    SliverToBoxAdapter(child: _buildInfo(detail)),
+                  ],
+                ),
+              ),
+            ),
+      // 长图可能几十页：动作放常驻底栏，滚到哪都能点（桌面放右侧信息栏）
+      bottomNavigationBar:
+          Platform.isWindows || detail == null || detail.pages.isEmpty
           ? null
           : Material(
               elevation: 8,
@@ -390,9 +462,9 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
   /// 横页的版面在 [PageStage] 里单独算：横图只按宽度铺会变成薄薄一条，
   /// 第一页还会整条钻到顶栏底下（点都点不到），所以横页给更高的舞台，
   /// 第一页再把状态栏 + 工具栏的高度让出来。
-  Widget _buildStrip(ArtworkDetail detail) {
+  Widget _buildStrip(ArtworkDetail detail, {double? width}) {
     final media = MediaQuery.of(context);
-    final width = media.size.width;
+    final pageWidth = width ?? media.size.width;
     // 状态栏 + 工具栏 + 8dp 呼吸位：横图第一页从这下面开始
     final appBarBottom = media.padding.top + kToolbarHeight + 8;
     return SliverList.separated(
@@ -402,7 +474,7 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
         final page = detail.pages[index];
         return ArtworkPageTile(
           page: page,
-          screenWidth: width,
+          screenWidth: pageWidth,
           screenHeight: media.size.height,
           appBarBottom: appBarBottom,
           first: index == 0,
@@ -519,13 +591,18 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
                 IconButton(
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                  constraints: const BoxConstraints(
+                    minWidth: 34,
+                    minHeight: 34,
+                  ),
                   iconSize: 22,
                   color: star <= _rating
                       ? theme.colorScheme.primary
                       : theme.colorScheme.outline,
                   icon: Icon(
-                    star <= _rating ? Icons.star_rounded : Icons.star_border_rounded,
+                    star <= _rating
+                        ? Icons.star_rounded
+                        : Icons.star_border_rounded,
                   ),
                   onPressed: _busyRating ? null : () => _setRating(star),
                 ),
@@ -572,8 +649,26 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
             ),
           ],
           const SizedBox(height: 22),
-          // 收藏 / 打开放在底部常驻栏：51 页的长图滚到底要两万多像素，
-          // 动作不能埋在信息的最后。
+          // 桌面：收藏 / 打开固定在右侧信息栏；手机：底部常驻栏。
+          if (Platform.isWindows) ...[
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _busyFavorite ? null : _toggleFavorite,
+                icon: Icon(_favorite ? Icons.favorite : Icons.favorite_border),
+                label: Text(_favorite ? '已收藏' : '收藏'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _openPixiv,
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('在 Pixiv 打开'),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -609,7 +704,8 @@ String _formatDate(int seconds) {
   return '${d.year}-${two(d.month)}-${two(d.day)}';
 }
 
-class _MetaChip extends StatelessWidget {  const _MetaChip({required this.icon, required this.label, this.onTap});
+class _MetaChip extends StatelessWidget {
+  const _MetaChip({required this.icon, required this.label, this.onTap});
 
   final IconData icon;
   final String label;
@@ -659,7 +755,10 @@ class _MissingBody extends StatelessWidget {
             style: Theme.of(context).textTheme.labelSmall,
           ),
           const SizedBox(height: 14),
-          OutlinedButton(onPressed: onOpenPixiv, child: const Text('在 Pixiv 打开')),
+          OutlinedButton(
+            onPressed: onOpenPixiv,
+            child: const Text('在 Pixiv 打开'),
+          ),
         ],
       ),
     );
@@ -679,7 +778,10 @@ class _ErrorBody extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.error_outline, color: Theme.of(context).colorScheme.error),
+            Icon(
+              Icons.error_outline,
+              color: Theme.of(context).colorScheme.error,
+            ),
             const SizedBox(height: 8),
             Text('读取失败：$error', textAlign: TextAlign.center),
           ],

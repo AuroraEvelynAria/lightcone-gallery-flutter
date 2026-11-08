@@ -52,9 +52,10 @@ class PixivClient {
     final value = raw?.trim() ?? '';
     if (value.isEmpty) return null;
     final lower = value.toLowerCase();
-    if (lower.contains('127.0.0.1') ||
-        lower.contains('localhost') ||
-        lower.contains('[::1]')) {
+    if (Platform.isAndroid &&
+        (lower.contains('127.0.0.1') ||
+            lower.contains('localhost') ||
+            lower.contains('[::1]'))) {
       return null;
     }
     return value;
@@ -84,6 +85,21 @@ class PixivClient {
     } catch (_) {
       return false;
     }
+  }
+
+  /// 代理预检失败时自动尝试直连：桌面 Clash 常开 TUN，直连本来就能通，
+  /// 而 127.0.0.1:7897 这条 HTTP 代理可能只剩一个坏节点/TLS 握手。
+  /// 同一进程内按代理串缓存结果：补头像会连发上千次，不能每次都探两遍。
+  static final Map<String, Future<String?>> _proxyResolution = {};
+
+  static Future<String?> resolveProxy(String? raw) {
+    final proxy = normalizeProxy(raw);
+    if (proxy == null) return Future<String?>.value(null);
+    return _proxyResolution.putIfAbsent(proxy, () async {
+      if (await probePixiv(proxy)) return proxy;
+      if (await probePixiv(null)) return null;
+      return proxy;
+    });
   }
 
   /// 代理预检：只做 TCP 握手（2 秒），不发 HTTP —— 20 秒超时前就能判生死。

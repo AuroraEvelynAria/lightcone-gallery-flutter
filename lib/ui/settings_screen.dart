@@ -1,9 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:sqflite/sqflite.dart' show getDatabasesPath;
 
+import '../data/db.dart';
 import '../data/models.dart';
-import '../media/directory_tree.dart';
 import '../state/app_settings.dart';
 import '../state/app_state.dart';
 import 'brand.dart';
@@ -53,7 +54,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final stats = await repo.stats();
     final pending = await repo.pendingMetaCount();
     final proxy = await repo.setting('pixiv_proxy') ?? '';
-    final dbDir = await getDatabasesPath();
+    final dbDir = await LightConeDb.databasePath();
     if (!mounted) return;
     setState(() {
       _stats = stats;
@@ -121,19 +122,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _changeRoot() async {
-    // 应用内目录树：不经过系统 SAF 选择器（无障碍自动点击器会把系统对话框
-    // 瞬间点掉，真机上表现为「只能停在 Pictures」）。
+    // Android 走应用内目录树（避开 SAF + 自动点击器）；桌面走系统文件夹对话框。
     final picked = await showDirectoryPicker(
       context,
       initialPath: widget.state.repo.libraryRoot,
     );
     if (picked == null || !mounted) return;
-    final name = DirectoryTree.nameOf(picked);
+    final name = pickedDirectoryName(picked);
     final ok = await _confirm(
       title: '切换到「$name」？',
       content:
           '会在 $picked 建立/迁移图库；不在这个目录下的图片索引会被清掉'
-          '（手机上的原图不会被删）。',
+          '（磁盘上的原图不会被删）。',
       okLabel: '切换',
     );
     if (!ok || !mounted) return;
@@ -151,204 +151,240 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final stats = _stats;
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 32),
-        children: [
-          _Section(
-            title: '外观',
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 900),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 32),
             children: [
-              _ThemePicker(settings: settings),
-              const Divider(height: 1),
-              _PalettePicker(settings: settings),
-              const Divider(height: 1),
-              _ColumnPicker(settings: settings),
-              const Divider(height: 1),
-              SwitchListTile(
-                value: settings.blurR18,
-                onChanged: (value) => settings.setBlurR18(value),
-                title: const Text('模糊 R-18 封面'),
-                subtitle: const Text('只在网格里打码，点进详情正常显示'),
+              _Section(
+                title: '外观',
+                children: [
+                  _ThemePicker(settings: settings),
+                  const Divider(height: 1),
+                  _PalettePicker(settings: settings),
+                  const Divider(height: 1),
+                  _ColumnPicker(settings: settings),
+                  const Divider(height: 1),
+                  SwitchListTile(
+                    value: settings.blurR18,
+                    onChanged: (value) => settings.setBlurR18(value),
+                    title: const Text('模糊 R-18 封面'),
+                    subtitle: const Text('只在网格里打码，点进详情正常显示'),
+                  ),
+                ],
               ),
-            ],
-          ),
-          _Section(
-            title: '数据',
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-                child: stats == null
-                    ? const Text('统计中…')
-                    : Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          _StatPill(label: '图片', value: stats.images),
-                          _StatPill(label: '作品', value: stats.artworks),
-                          _StatPill(label: '页', value: stats.pages),
-                          _StatPill(label: '画师', value: stats.artists),
-                          _StatPill(label: '标签', value: stats.tags),
-                          _StatPill(label: '元数据', value: stats.meta),
-                          _StatPill(label: '收藏', value: stats.favorites),
-                        ],
-                      ),
-              ),
-              const Divider(height: 1),
-              _InfoBlock(
-                icon: Icons.folder_outlined,
-                title: '图库目录',
-                value: widget.state.repo.libraryRoot,
-              ),
-              ListTile(
-                leading: const Icon(Icons.drive_file_move_outline),
-                title: const Text('更换图库目录'),
-                subtitle: const Text('换目录会清掉不在新目录下的索引（原图不动）'),
-                enabled: !_busy,
-                onTap: _changeRoot,
-              ),
-              ListTile(
-                leading: const Icon(Icons.refresh),
-                title: const Text('扫描图库'),
-                subtitle: const Text('按当前目录增量扫描'),
-                enabled: !_busy,
-                onTap: () => _run(widget.state.scanAll),
-              ),
-              SwitchListTile(
-                secondary: const Icon(Icons.auto_awesome_outlined),
-                value: settings.autoMeta,
-                onChanged: (value) => settings.setAutoMeta(value),
-                title: const Text('启动时自动补全新作品'),
-                subtitle: const Text('打开软件后增量扫描当前目录，最多补 50 条元数据；需要能访问 Pixiv'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.merge_type),
-                title: const Text('从桌面备份补元数据'),
-                subtitle: const Text('只搬元数据，不换索引（免联网）'),
-                enabled: !_busy,
-                onTap: () => _run(widget.state.importMetadataFromBackup),
-              ),
-              ListTile(
-                leading: const Icon(Icons.cloud_download_outlined),
-                title: const Text('补全 Pixiv 元数据'),
-                subtitle: pending == null
-                    ? const Text('统计中…')
-                    : Text(pending == 0 ? '全部作品都有元数据了' : '$pending 个 PID 待补全'),
-                onTap: () async {
-                  await showMetaSheet(context, widget.state);
-                  if (mounted) await _load();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.file_upload_outlined),
-                title: const Text('导入桌面端备份'),
-                subtitle: const Text('整库替换，需重新扫描'),
-                enabled: !_busy,
-                onTap: () async {
-                  final ok = await _confirm(
-                    title: '替换本机索引？',
-                    content:
-                        '会把本机全部图片 / 作品索引换成备份里的内容。'
-                        '桌面备份里的路径是 Windows 路径，换完之后手机上的图显示不出来，'
-                        '需要再扫描一次。\n\n'
-                        '收藏、评分与忽略名单也会被覆盖。',
-                    okLabel: '替换',
-                  );
-                  if (!ok) return;
-                  await _run(widget.state.importBackup, rebindSettings: true);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.file_download_outlined),
-                title: const Text('导出备份'),
-                subtitle: const Text('生成 .db，桌面端「导入备份」可直接用'),
-                enabled: !_busy,
-                onTap: () => _run(widget.state.exportBackup),
-              ),
-              ListTile(
-                leading: const Icon(Icons.visibility_off_outlined),
-                title: Text(
-                  '清空忽略名单${stats == null ? '' : '（${stats.ignored}）'}',
-                ),
-                subtitle: const Text('移出的条目会重新参与扫描'),
-                enabled: !_busy && (stats?.ignored ?? 0) > 0,
-                onTap: () async {
-                  final messenger = ScaffoldMessenger.of(context);
-                  final ok = await _confirm(
-                    title: '清空忽略名单？',
-                    content: '被移出作品库的条目会重新出现在扫描结果里。',
-                    okLabel: '清空',
-                  );
-                  if (!ok) return;
-                  await widget.state.repo.clearIgnored();
-                  widget.state.bumpData();
-                  if (!mounted) return;
-                  messenger.showSnackBar(
-                    const SnackBar(content: Text('忽略名单已清空')),
-                  );
-                  await _load();
-                },
-              ),
-            ],
-          ),
-          _Section(
-            title: '网络',
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    TextField(
-                      controller: _proxyController,
-                      decoration: const InputDecoration(
-                        labelText: 'Pixiv 代理（可选）',
-                        hintText: 'http://192.168.x.x:7897',
-                        isDense: true,
-                        border: OutlineInputBorder(),
-                      ),
+              _Section(
+                title: '数据',
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                    child: stats == null
+                        ? const Text('统计中…')
+                        : Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              _StatPill(label: '图片', value: stats.images),
+                              _StatPill(label: '作品', value: stats.artworks),
+                              _StatPill(label: '页', value: stats.pages),
+                              _StatPill(label: '画师', value: stats.artists),
+                              _StatPill(label: '标签', value: stats.tags),
+                              _StatPill(label: '元数据', value: stats.meta),
+                              _StatPill(label: '收藏', value: stats.favorites),
+                            ],
+                          ),
+                  ),
+                  const Divider(height: 1),
+                  _InfoBlock(
+                    icon: Icons.folder_outlined,
+                    title: '图库目录',
+                    value: widget.state.repo.libraryRoot,
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.drive_file_move_outline),
+                    title: const Text('更换图库目录'),
+                    subtitle: const Text('换目录会清掉不在新目录下的索引（原图不动）'),
+                    enabled: !_busy,
+                    onTap: _changeRoot,
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.refresh),
+                    title: const Text('扫描图库'),
+                    subtitle: const Text('按当前目录增量扫描'),
+                    enabled: !_busy,
+                    onTap: () => _run(widget.state.scanAll),
+                  ),
+                  SwitchListTile(
+                    secondary: const Icon(Icons.auto_awesome_outlined),
+                    value: settings.autoMeta,
+                    onChanged: (value) => settings.setAutoMeta(value),
+                    title: const Text('启动时自动补全新作品'),
+                    subtitle: const Text(
+                      '打开软件后增量扫描当前目录，最多补 50 条元数据；需要能访问 Pixiv',
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '127.0.0.1 在手机上指向手机自己，会按直连处理；'
-                      '要用电脑的代理请填电脑局域网 IP，并允许局域网连接。',
-                      style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.swap_horiz),
+                    title: const Text('导出元数据包'),
+                    subtitle: const Text(
+                      '标题/标签/画师/AI/收藏评分/标签画廊；双端互传，不含原图与索引路径',
                     ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: OutlinedButton(
-                        onPressed: _saveProxy,
-                        child: const Text('保存代理'),
-                      ),
+                    enabled: !_busy,
+                    onTap: () => _run(widget.state.exportMetadataPack),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.input),
+                    title: const Text('导入元数据包'),
+                    subtitle: const Text('合并另一端的元数据，不动本机作品索引与原图'),
+                    enabled: !_busy,
+                    onTap: () => _run(widget.state.importMetadataPack),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.merge_type),
+                    title: Text(
+                      Platform.isWindows ? '从 LightCone 备份补元数据' : '从桌面备份补元数据',
                     ),
-                  ],
-                ),
+                    subtitle: Text(
+                      Platform.isWindows
+                          ? '选 Tauri 的 gallery.db 或手机导出的 lightcone-*.db，合并标题/标签/画师/AI/收藏评分'
+                          : '只搬元数据，不换索引（免联网）',
+                    ),
+                    enabled: !_busy,
+                    onTap: () => _run(widget.state.importMetadataFromBackup),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.cloud_download_outlined),
+                    title: const Text('补全 Pixiv 元数据'),
+                    subtitle: pending == null
+                        ? const Text('统计中…')
+                        : Text(
+                            pending == 0 ? '全部作品都有元数据了' : '$pending 个 PID 待补全',
+                          ),
+                    onTap: () async {
+                      await showMetaSheet(context, widget.state);
+                      if (mounted) await _load();
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.file_upload_outlined),
+                    title: const Text('导入索引备份'),
+                    subtitle: const Text('整库替换，需重新扫描'),
+                    enabled: !_busy,
+                    onTap: () async {
+                      final ok = await _confirm(
+                        title: '替换本机索引？',
+                        content:
+                            '会把本机全部图片 / 作品索引换成备份里的内容。'
+                            '备份里的路径来自原机器，换机器后需要重新扫描才能显示图片。'
+                            '\n\n'
+                            '收藏、评分与忽略名单也会被覆盖。',
+                        okLabel: '替换',
+                      );
+                      if (!ok) return;
+                      await _run(
+                        widget.state.importBackup,
+                        rebindSettings: true,
+                      );
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.file_download_outlined),
+                    title: const Text('导出备份'),
+                    subtitle: const Text('生成 .db，桌面端「导入备份」可直接用'),
+                    enabled: !_busy,
+                    onTap: () => _run(widget.state.exportBackup),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.visibility_off_outlined),
+                    title: Text(
+                      '清空忽略名单${stats == null ? '' : '（${stats.ignored}）'}',
+                    ),
+                    subtitle: const Text('移出的条目会重新参与扫描'),
+                    enabled: !_busy && (stats?.ignored ?? 0) > 0,
+                    onTap: () async {
+                      final messenger = ScaffoldMessenger.of(context);
+                      final ok = await _confirm(
+                        title: '清空忽略名单？',
+                        content: '被移出作品库的条目会重新出现在扫描结果里。',
+                        okLabel: '清空',
+                      );
+                      if (!ok) return;
+                      await widget.state.repo.clearIgnored();
+                      widget.state.bumpData();
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        const SnackBar(content: Text('忽略名单已清空')),
+                      );
+                      await _load();
+                    },
+                  ),
+                ],
+              ),
+              _Section(
+                title: '网络',
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextField(
+                          controller: _proxyController,
+                          decoration: const InputDecoration(
+                            labelText: 'Pixiv 代理（可选）',
+                            hintText: 'http://192.168.x.x:7897',
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          Platform.isAndroid
+                              ? '127.0.0.1 在手机上指向手机自己，会按直连处理；'
+                                    '要用电脑的代理请填电脑局域网 IP，并允许局域网连接。'
+                              : '桌面端可直接填本机代理，例如 http://127.0.0.1:7897。',
+                          style: Theme.of(context).textTheme.labelSmall,
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: OutlinedButton(
+                            onPressed: _saveProxy,
+                            child: const Text('保存代理'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              _Section(
+                title: '关于',
+                children: [
+                  ListTile(
+                    leading: const SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: LightConeMark(size: 40, glow: false),
+                    ),
+                    title: const Text('光锥图库 · Flutter 版'),
+                    subtitle: Text(
+                      '版本 $_version · 索引 schema v12\n'
+                      '与桌面端共用同一套表结构',
+                    ),
+                    isThreeLine: true,
+                  ),
+                  _InfoBlock(
+                    icon: Icons.storage_outlined,
+                    title: '数据库',
+                    value: _dbDir,
+                  ),
+                ],
               ),
             ],
           ),
-          _Section(
-            title: '关于',
-            children: [
-              ListTile(
-                leading: const SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: LightConeMark(size: 40, glow: false),
-                ),
-                title: const Text('光锥图库 · Flutter 版'),
-                subtitle: Text(
-                  '版本 $_version · 索引 schema v12\n'
-                  '与桌面端共用同一套表结构',
-                ),
-                isThreeLine: true,
-              ),
-              _InfoBlock(
-                icon: Icons.storage_outlined,
-                title: '数据库',
-                value: '$_dbDir/lightcone.db',
-              ),
-            ],
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -396,7 +432,7 @@ class _InfoBlock extends StatelessWidget {
                   value,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
-                    fontFamily: 'monospace',
+                    fontFamily: Platform.isWindows ? 'Consolas' : 'monospace',
                     fontSize: 11,
                   ),
                 ),

@@ -1,130 +1,53 @@
-import 'package:flutter/services.dart';
+import 'dart:io';
+import 'dart:typed_data';
 
 import '../data/models.dart';
+import 'android_media_backend.dart';
+import 'media_backend.dart';
+import 'windows_media_backend.dart';
 
-/// SAF 选出来的图库目录。
-class PickedDirectory {
-  const PickedDirectory(this.path, this.name);
+export 'media_backend.dart' show PickedDirectory;
 
-  /// 绝对路径前缀，如 `/storage/emulated/0/Pictures/pixez`。
-  final String path;
-  final String name;
-}
-
-/// 与 `MediaStoreChannel.kt` 的桥。枚举与缩略图都在原生侧完成 —— Flutter 只
-/// 拿结果，不参与 MediaStore 查询（这是网格流畅的前提）。
+/// 平台媒体门面：调用方只认识这一层，具体实现按平台切换。
 class MediaChannel {
-  static const MethodChannel _channel = MethodChannel('com.lightcone.gallery/media');
+  static final MediaBackend _backend = Platform.isAndroid
+      ? AndroidMediaBackend()
+      : WindowsMediaBackend();
 
-  static Future<bool> hasPermission() async =>
-      await _channel.invokeMethod<bool>('hasPermission') ?? false;
+  static Future<bool> hasPermission() => _backend.hasPermission();
 
-  static Future<bool> requestPermission() async =>
-      await _channel.invokeMethod<bool>('requestPermission') ?? false;
+  static Future<bool> requestPermission() => _backend.requestPermission();
 
-  /// 全机图片一次枚举（25k 行约 1 秒，只有扫描时调用）。
-  static Future<List<MediaImageDto>> listImages() async {
-    final raw = await _channel.invokeMethod<List<Object?>>('listImages');
-    if (raw == null) return const [];
-    return raw.map((item) {
-      final map = (item as Map).cast<String, Object?>();
-      return MediaImageDto(
-        id: (map['id'] as num).toInt(),
-        name: map['name'] as String? ?? '',
-        relativePath: map['relativePath'] as String? ?? '',
-        size: (map['size'] as num?)?.toInt() ?? 0,
-        modified: (map['modified'] as num?)?.toInt() ?? 0,
-        width: (map['width'] as num?)?.toInt() ?? 0,
-        height: (map['height'] as num?)?.toInt() ?? 0,
-      );
-    }).toList(growable: false);
-  }
+  /// Android 枚举全机 MediaStore；Windows 递归扫描 [root]。
+  static Future<List<MediaImageDto>> listImages({
+    String? root,
+    Map<String, KnownImageSize>? known,
+  }) => _backend.listImages(root: root, known: known);
 
-  /// 系统缩略图（MediaProvider 预生成）。失败返回 null，UI 退回文件解码。
-  static Future<Uint8List?> thumbnail(int id, int size) async {
-    try {
-      return await _channel.invokeMethod<Uint8List>(
-        'thumbnail',
-        {'id': id, 'size': size},
-      );
-    } catch (_) {
-      return null;
-    }
-  }
+  static Future<Uint8List?> thumbnail(int id, int size) =>
+      _backend.thumbnail(id, size);
 
-  /// SAF 选一个 .db 备份：原生侧直接拷进 cache 目录并返回绝对路径。
-  static Future<String?> pickBackup() async =>
-      await _channel.invokeMethod<String>('pickBackup');
+  static Future<String?> pickBackup() => _backend.pickBackup();
 
-  /// SAF 选图库目录，原生侧把 tree URI 解析成绝对路径。
-  static Future<PickedDirectory?> pickDirectory() async {
-    final raw = await _channel.invokeMethod<Map>('pickDirectory');
-    if (raw == null) return null;
-    final map = raw.cast<String, Object?>();
-    final path = map['path'] as String?;
-    if (path == null || path.isEmpty) return null;
-    return PickedDirectory(path, map['name'] as String? ?? '图库');
-  }
+  static Future<PickedDirectory?> pickDirectory() => _backend.pickDirectory();
 
-  /// 导出备份：让用户选保存位置，原生侧把 sourcePath 拷过去。
-  /// 返回目标 URI；用户取消返回 null。
   static Future<String?> exportBackup(String sourcePath, String name) =>
-      _channel.invokeMethod<String>(
-        'exportBackup',
-        {'source': sourcePath, 'name': name},
-      );
+      _backend.exportBackup(sourcePath, name);
 
-  /// 系统分享：单张走 ACTION_SEND，多张走 ACTION_SEND_MULTIPLE。
-  /// `asFile` = 以文件分享，接收方不会再把它压成聊天图。
   static Future<bool> shareImages(
     List<String> paths, {
     String? text,
     bool asFile = false,
-  }) async {
-    if (paths.isEmpty) return false;
-    try {
-      return await _channel.invokeMethod<bool>(
-            'shareImages',
-            {'paths': paths, 'text': text, 'asFile': asFile},
-          ) ??
-          false;
-    } catch (_) {
-      return false;
-    }
-  }
+  }) => _backend.shareImages(paths, text: text, asFile: asFile);
 
-  /// 保存原图到相册 Pictures/LightCone。
-  static Future<bool> saveToGallery(String path, {String? name}) async {
-    try {
-      return await _channel.invokeMethod<bool>(
-            'saveToGallery',
-            {'path': path, 'name': name},
-          ) ??
-          false;
-    } catch (_) {
-      return false;
-    }
-  }
+  static Future<bool> saveToGallery(String path, {String? name}) =>
+      _backend.saveToGallery(path, name: name);
 
-  /// 设为壁纸：target = home / lock / both。
-  static Future<bool> setWallpaper(String path, {String target = 'home'}) async {
-    try {
-      return await _channel.invokeMethod<bool>(
-            'setWallpaper',
-            {'path': path, 'target': target},
-          ) ??
-          false;
-    } catch (_) {
-      return false;
-    }
-  }
+  static Future<bool> setWallpaper(String path, {String target = 'home'}) =>
+      _backend.setWallpaper(path, target: target);
 
-  /// 系统浏览器 / Pixiv App 打开链接（详情页的「在 Pixiv 打开」）。
-  static Future<bool> openUrl(String url) async {
-    try {
-      return await _channel.invokeMethod<bool>('openUrl', {'url': url}) ?? false;
-    } catch (_) {
-      return false;
-    }
-  }
+  static Future<bool> openUrl(String url) => _backend.openUrl(url);
+
+  static Future<bool> revealInExplorer(List<String> paths) =>
+      _backend.revealInExplorer(paths);
 }

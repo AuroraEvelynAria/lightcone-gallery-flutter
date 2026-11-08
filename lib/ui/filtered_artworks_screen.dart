@@ -16,6 +16,7 @@ class FilteredArtworksScreen extends StatefulWidget {
     required this.title,
     this.artistUid,
     this.tags = const [],
+    this.tagsMatchAny = false,
     this.aiOnly = false,
   });
 
@@ -23,6 +24,7 @@ class FilteredArtworksScreen extends StatefulWidget {
   final String title;
   final String? artistUid;
   final List<String> tags;
+  final bool tagsMatchAny;
 
   /// 只看 AI 生成（Pixiv 标记 ∪ AI 标签）。
   final bool aiOnly;
@@ -60,6 +62,7 @@ class _FilteredArtworksScreenState extends State<FilteredArtworksScreen> {
     final page = await widget.state.repo.artworksPage(
       artistUid: widget.artistUid,
       tags: widget.tags,
+      tagsMatchAny: widget.tagsMatchAny,
       aiOnly: widget.aiOnly,
       offset: _rows.length,
       limit: _pageSize,
@@ -83,7 +86,11 @@ class _FilteredArtworksScreenState extends State<FilteredArtworksScreen> {
           onFavoriteChanged: (favorite) {
             if (!mounted) return;
             final at = _rows.indexWhere((r) => r.id == row.id);
-            if (at >= 0) setState(() => _rows[at] = _rows[at].copyWith(favorite: favorite));
+            if (at >= 0) {
+              setState(
+                () => _rows[at] = _rows[at].copyWith(favorite: favorite),
+              );
+            }
           },
         ),
       ),
@@ -109,10 +116,11 @@ class _FilteredArtworksScreenState extends State<FilteredArtworksScreen> {
     final updated = await widget.state.repo.setPidFavorite(row.pid, next);
     if (!mounted || updated > 0) return;
     final at = _rows.indexWhere((r) => r.id == row.id);
-    if (at >= 0) setState(() => _rows[at] = _rows[at].copyWith(favorite: !next));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('这张不在图库里，收藏只对图库图片生效')),
-    );
+    if (at >= 0) {
+      setState(() => _rows[at] = _rows[at].copyWith(favorite: !next));
+    }
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('这张不在图库里，收藏只对图库图片生效')));
   }
 
   @override

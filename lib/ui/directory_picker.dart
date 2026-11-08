@@ -1,22 +1,38 @@
+import 'dart:io';
+
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import '../media/directory_tree.dart';
 import '../media/media_channel.dart';
 
-/// 应用内图库目录选择器。
+/// 应用内图库目录选择器（Android）。
 ///
 /// 不用 SAF 的 `ACTION_OPEN_DOCUMENT_TREE`：在中文 Android 环境里，「李跳跳 /
 /// GKD」这类无障碍自动点击器会把系统选择器的「使用此文件夹 / 允许」瞬间点掉，
 /// 目录树根本来不及展开（真机复现）。这里直接用 MediaStore 的全量图片行整理
 /// 出目录树，点哪层进哪层，不经过任何系统对话框。
+///
+/// Windows/桌面上 MediaStore 不存在，直接开系统文件夹对话框。
 Future<String?> showDirectoryPicker(
   BuildContext context, {
   required String initialPath,
-}) {
+}) async {
+  if (!Platform.isAndroid) {
+    return getDirectoryPath(confirmButtonText: '选择图库文件夹');
+  }
   return showDialog<String>(
     context: context,
     builder: (_) => _DirectoryPickerDialog(initialPath: initialPath),
   );
+}
+
+/// 路径最后一段；跨平台（Windows 反斜杠 / Android 正斜杠）。
+String pickedDirectoryName(String path) {
+  if (path.trim().isEmpty) return '图库';
+  final base = p.basename(path);
+  return base.isEmpty ? '图库' : base;
 }
 
 class _DirectoryPickerDialog extends StatefulWidget {

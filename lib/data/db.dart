@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
 import 'schema.dart';
@@ -13,6 +14,9 @@ import 'schema.dart';
 class LightConeDb {
   LightConeDb._(this.database);
 
+  /// 测试用：直接包装一个已经打开的数据库（FFI 临时库）。
+  LightConeDb.forTesting(this.database);
+
   final Database database;
   static LightConeDb? _instance;
 
@@ -20,7 +24,7 @@ class LightConeDb {
     final existing = _instance;
     if (existing != null) return existing;
 
-    final dbPath = await _dbPath();
+    final dbPath = await databasePath();
     final db = await openDatabase(
       dbPath,
       version: 12,
@@ -37,6 +41,26 @@ class LightConeDb {
         // 导入的桌面库没有私有表：每次打开补建（幂等）
         await db.execute(kMediaIdsTable);
         await db.execute(kIllustAiTable);
+        // 桌面端同款：WAL 下两个连接短暂并发时不至于立刻报 database is locked
+        await db.execute('PRAGMA busy_timeout = 5000');
+        // 老版本 Flutter 库把 tag_galleries 建成了少列版本却标 user_version=12；
+        // 这里幂等补列，避免 Tauri 打开时跳过 v12 迁移后找不到 match_mode。
+        final tables = await db.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type = 'table' "
+          "AND name = 'tag_galleries'",
+        );
+        if (tables.isNotEmpty) {
+          final columns = await db.rawQuery('PRAGMA table_info(tag_galleries)');
+          final hasMatchMode = columns.any(
+            (row) => row['name'] == 'match_mode',
+          );
+          if (!hasMatchMode) {
+            await db.execute(
+              "ALTER TABLE tag_galleries ADD COLUMN "
+              "match_mode TEXT NOT NULL DEFAULT 'all'",
+            );
+          }
+        }
         // 与桌面一致：移除图库要级联清 images
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -45,8 +69,16 @@ class LightConeDb {
     return _instance!;
   }
 
-  static Future<String> _dbPath() async {
-    final dir = await getDatabasesPath();
+  /// 当前数据库文件的绝对路径。设置页 / 导出备份 / 桌面端都需要它。
+  static Future<String> databasePath() async {
+    final String dir;
+    if (Platform.isAndroid) {
+      dir = await getDatabasesPath();
+    } else {
+      // Windows/macOS/Linux：放在应用支持目录，绝不写 Program Files。
+      final support = await getApplicationSupportDirectory();
+      dir = support.path;
+    }
     await Directory(dir).create(recursive: true);
     // 演示构建用独立数据库（--dart-define=DEMO_DB=lightcone_demo.db），
     // 正式包永远走 lightcone.db，互不影响。
@@ -95,7 +127,7 @@ class LightConeDb {
   /// 用备份替换当前库。校验由调用方先做（[validateBackup]）。
   /// 返回新的门面实例。
   static Future<LightConeDb> replaceWith(String sourcePath) async {
-    final targetPath = await _dbPath();
+    final targetPath = await databasePath();
     await _instance?.close();
     for (final suffix in ['', '-wal', '-shm']) {
       final f = File('$targetPath$suffix');

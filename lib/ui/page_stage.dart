@@ -107,16 +107,15 @@ class ArtworkPageTile extends StatelessWidget {
       appBarBottom: appBarBottom,
       first: first,
     );
-    final cacheWidth =
-        (screenWidth * MediaQuery.devicePixelRatioOf(context)).round();
+    final cacheWidth = (screenWidth * MediaQuery.devicePixelRatioOf(context))
+        .round();
     final sharp = Image(
       key: const ValueKey('page-sharp'),
       image: providerFor(cacheWidth),
       fit: BoxFit.contain,
       gaplessPlayback: true,
-      errorBuilder: (_, _, _) => const Center(
-        child: Icon(Icons.broken_image_outlined, size: 40),
-      ),
+      errorBuilder: (_, _, _) =>
+          const Center(child: Icon(Icons.broken_image_outlined, size: 40)),
     );
 
     Widget tile;
@@ -178,11 +177,14 @@ class ArtworkPageTile extends StatelessWidget {
       );
     }
 
-    Widget result = GestureDetector(
-      // 模糊底与留白也算点击区（栈里的 ColoredBox 会命中，但显式声明更稳）
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: tile,
+    Widget result = MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        // 模糊底与留白也算点击区（栈里的 ColoredBox 会命中，但显式声明更稳）
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: tile,
+      ),
     );
     if (heroTag != null) {
       result = Hero(tag: heroTag!, child: result);
@@ -213,10 +215,7 @@ class _Pill extends StatelessWidget {
             Icon(icon, size: 13, color: Colors.white),
             const SizedBox(width: 3),
           ],
-          Text(
-            text,
-            style: const TextStyle(color: Colors.white, fontSize: 11),
-          ),
+          Text(text, style: const TextStyle(color: Colors.white, fontSize: 11)),
         ],
       ),
     );

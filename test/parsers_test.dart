@@ -15,7 +15,10 @@ void main() {
 
     test('完整路径', () {
       expect(parsePid(r'C:\pics\123456_p3.webp'), ('123456', 3));
-      expect(parsePid('/storage/emulated/0/Pictures/pixez/123456_p3.webp'), ('123456', 3));
+      expect(parsePid('/storage/emulated/0/Pictures/pixez/123456_p3.webp'), (
+        '123456',
+        3,
+      ));
     });
   });
 
@@ -32,8 +35,19 @@ void main() {
   group('parseArtist', () {
     test('画师名_uid 目录', () {
       expect(
-        parseArtist('/storage/emulated/0/Pictures/pixez/-273℃望歩_6657532/123456_p0.jpg'),
+        parseArtist(
+          '/storage/emulated/0/Pictures/pixez/-273℃望歩_6657532/123456_p0.jpg',
+        ),
         ('6657532', '-273℃望歩'),
+      );
+    });
+
+    test('Windows 反斜杠路径', () {
+      expect(
+        parseArtist(
+          r'D:\pixez pics\pixez\AuroraAria_71934453\151827235_p0.png',
+        ),
+        ('71934453', 'AuroraAria'),
       );
     });
 

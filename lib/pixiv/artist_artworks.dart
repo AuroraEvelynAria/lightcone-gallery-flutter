@@ -58,7 +58,9 @@ class ArtistArtworkStore {
     final cached = _dir;
     if (cached != null) return cached;
     final base = await getApplicationSupportDirectory();
-    final dir = Directory('${base.path}${Platform.pathSeparator}artist_artworks');
+    final dir = Directory(
+      '${base.path}${Platform.pathSeparator}artist_artworks',
+    );
     if (!await dir.exists()) await dir.create(recursive: true);
     return _dir = dir;
   }
@@ -134,7 +136,7 @@ class ArtistArtworkStore {
     }
 
     try {
-      final dio = PixivClient.build(proxy);
+      final dio = PixivClient.build(await PixivClient.resolveProxy(proxy));
       dynamic raw;
       // 代理节点偶发掐握手：重试一次（头像下载已经证明这一步有需要）
       for (var attempt = 0; attempt < 2; attempt++) {
@@ -156,16 +158,13 @@ class ArtistArtworkStore {
       final decoded = raw is Map<String, dynamic>
           ? raw
           : raw is String
-              ? jsonDecode(raw)
-              : raw;
+          ? jsonDecode(raw)
+          : raw;
       final pids = artworkIdsFromProfile(decoded);
       final now = DateTime.now();
       final result = ArtistArtworks(pids: pids, fetchedAt: now);
       await file.writeAsString(
-        jsonEncode({
-          'pids': pids,
-          'fetched_at': now.millisecondsSinceEpoch,
-        }),
+        jsonEncode({'pids': pids, 'fetched_at': now.millisecondsSinceEpoch}),
         flush: true,
       );
       _lastFailure = null;

@@ -1,4 +1,4 @@
-# 光锥图库 · LightCone Gallery（Android / Flutter）
+# 光锥图库 · LightCone Gallery（Android / Windows · Flutter）
 
 > 本地优先的 Pixiv 作品仓库：索引 pixez 下载到的图，按作品归组、竖排长图看画，
 > 收藏 / 评分 / 标签画廊全部离线可用。与桌面端
@@ -72,7 +72,8 @@
 - **目录可选**：首次启动选图库目录（默认 `Pictures/pixez`），设置里随时更换；
   目录选择走**应用内目录树**（MediaStore 整理，不经过系统 SAF），不会被
   「李跳跳 / GKD」这类无障碍自动点击器瞬间点掉
-- **与桌面互通**：导入桌面备份（元数据 / 收藏 / 评分 / 画廊），也能导出 `.db` 回桌面
+- **与桌面互通**：导入桌面备份（元数据 / 收藏 / 评分 / 画廊），也能导出 `.db`
+  回桌面；另有 **双端元数据包** 互传（Android ↔ Windows，不含原图与路径）
 - **观感**：六套配色、深浅主题、R-18 封面模糊、自适应布局（横屏左侧导航）
 - **元数据补全**：免 OAuth 的 Pixiv ajax 端点，限流语义与桌面版一致
 - **启动自动补全**：打开软件后增量扫描当前目录，发现新作品自动补元数据
@@ -130,6 +131,19 @@ android/app/src/main/res/drawable/ic_lightcone*.xml
 ```
 
 ## 与桌面端的数据互通
+
+### 双端元数据包互传（Android ↔ Windows）
+
+设置 → 数据 →「导出元数据包 / 导入元数据包」。
+
+- 包是一个独立的小 `.db`（4k 作品约 1.6MB），只含 `illust_meta` /
+  `illust_tags` / `artists` / `illust_ai` / 收藏评分（按 PID）/ `tag_galleries`；
+  不含原图、图片路径、`libraries`、缩略图。
+- 导入只合并，不动本机的 artworks/images 路径索引与忽略名单；收藏/评分按 PID
+  取并集，标签画廊按 id 覆盖。标签画廊的手动钉图（pins）暂不包含。
+- Android ↔ Windows 双向；桌面端「从 LightCone 备份补元数据」也能直接读
+  Tauri 的 `gallery.db` 或手机导出的 `lightcone-*.db`（兼容 v11 无 `match_mode`
+  的库）。同一 PID 以 `fetched_at` 较新的为准，旧备份不会把已补数据降级。
 
 - 打开的是**同一套 schema v12**（16 张表）；`sqflite` 就是 Android 原生
   SQLite，不做 Room 那种逐列校验，所以导入桌面备份**直接换文件**即可：
@@ -317,6 +331,36 @@ flutter build apk --release      # release 用 debug 签名，可直接覆盖安
 
 包名 `com.lightcone.gallery.flutter`，与 Tauri 版（`com.lightcone.gallery`）、
 Kotlin 版（`com.lightcone.gallery.android`）并存，互不覆盖数据。
+
+### Windows 桌面端（MVP）
+
+前置：Windows 10/11、Flutter 3.47+、Visual Studio 的「使用 C++ 的桌面开发」+
+Windows 10/11 SDK、CMake。
+
+```bash
+cd F:/LightConeFlutter
+flutter pub get
+flutter build windows --release
+```
+
+产物：`build\windows\x64\runner\Release\lightcone_flutter.exe`（连同同目录的
+DLL 与 `data` 一起分发）。
+
+- 首次启动选一个含 `{pid}_p{n}` 的图库目录，扫描后图库 / 作品库 / 详情 /
+  检视器可用；网格缩略图走 `FileImage` 降采样。
+- 桌面端使用**独立数据库**：
+  `%APPDATA%\AuroraEvelynAria\LightCone Gallery\lightcone.db`，不会改动 Tauri 的
+  `%APPDATA%\com.lightcone.gallery\gallery.db`。
+- 设置 → 数据 →「从 LightCone 备份补元数据」可把 Tauri 库或手机导出的
+  `lightcone-*.db` 合并过来（只读）：标题 / 标签 / 画师 / AI / 收藏评分 /
+  标签画廊；收藏评分按 PID 取并集。Tauri 库还是 v11 时没有 `match_mode` 也能
+  导入（按 `all` 处理）。
+- 标签画廊在 Windows 上可直接新建 / 编辑 / 删除（名称 + 标签 + 同时/任一满足）；
+  Android 端保持只读。
+- Pixiv 同步：代理预检失败时会自动尝试直连（桌面 Clash TUN 的常见场景），
+  启动自动补全与手动补全共用这条回退。
+- 检视器：滚轮缩放、双击、←/→ 翻页、Esc 关闭。MVP 暂不含分享、设为壁纸 /
+  锁屏、持久化缩略图缓存与 Windows 安装包。
 
 ## 真机验证（2026-11-06，K70 Ultra，release 包）
 

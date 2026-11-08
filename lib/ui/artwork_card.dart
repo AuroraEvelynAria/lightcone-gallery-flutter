@@ -71,15 +71,16 @@ class ArtworkCard extends StatelessWidget {
       color: scheme.surfaceContainerLow,
       shape: RoundedRectangleBorder(
         borderRadius: radius,
-        side: BorderSide(
-          color: scheme.outlineVariant.withValues(alpha: 0.55),
-        ),
+        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.55)),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         borderRadius: radius,
+        mouseCursor: SystemMouseCursors.click,
         onTap: onTap,
         onLongPress: onLongPress,
+        // 桌面右键复用长按语义：图库=收藏，作品库=进入多选。
+        onSecondaryTap: onLongPress,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

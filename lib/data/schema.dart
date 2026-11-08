@@ -164,6 +164,7 @@ const List<String> kSchemaV12 = [
       name       TEXT NOT NULL,
       tags       TEXT NOT NULL DEFAULT '[]',
       rating     INTEGER NOT NULL DEFAULT -1,
+      match_mode TEXT    NOT NULL DEFAULT 'all',
       created_at INTEGER NOT NULL
   )
   ''',
@@ -198,7 +199,20 @@ CREATE TABLE IF NOT EXISTS illust_ai (
 
 /// 桌面备份里必须存在的表（与 Kotlin 版 BackupImporter 的校验一致）。
 const List<String> kRequiredTables = [
-  'libraries', 'images', 'albums', 'album_images', 'tags', 'image_tags',
-  'thumbnails', 'settings', 'artworks', 'artwork_roots', 'ignored_artworks',
-  'artists', 'illust_meta', 'illust_tags', 'tag_galleries', 'tag_gallery_pins',
+  'libraries',
+  'images',
+  'albums',
+  'album_images',
+  'tags',
+  'image_tags',
+  'thumbnails',
+  'settings',
+  'artworks',
+  'artwork_roots',
+  'ignored_artworks',
+  'artists',
+  'illust_meta',
+  'illust_tags',
+  'tag_galleries',
+  'tag_gallery_pins',
 ];

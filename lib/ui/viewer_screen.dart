@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 
 import '../media/media_channel.dart';
 
@@ -136,11 +138,19 @@ class _ViewerScreenState extends State<ViewerScreen>
 
   Future<void> _saveToGallery() async {
     final item = widget.items[_index];
-    final name = item.path.split('/').last;
+    final name = p.basename(item.path);
     final ok = await MediaChannel.saveToGallery(item.path, name: name);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(ok ? '已保存到相册 Pictures/LightCone' : '保存失败')),
+      SnackBar(
+        content: Text(
+          ok
+              ? (Platform.isWindows
+                    ? '已保存到 Pictures\\LightCone'
+                    : '已保存到相册 Pictures/LightCone')
+              : '保存失败',
+        ),
+      ),
     );
   }
 
@@ -175,138 +185,194 @@ class _ViewerScreenState extends State<ViewerScreen>
         .showSnackBar(SnackBar(content: Text(ok ? '已设为壁纸' : '设置壁纸失败')));
   }
 
+  void _goToPage(int index) {
+    if (index < 0 || index >= widget.items.length) return;
+    _zoomAnimation.stop();
+    _controller.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.black45,
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.share_outlined),
-            tooltip: '分享',
-            onPressed: _share,
-          ),
-          PopupMenuButton<String>(
-            onSelected: (value) {
-              switch (value) {
-                case 'wallpaper':
-                  _setWallpaper();
-                case 'share-file':
-                  _share(asFile: true);
-                case 'save':
-                  _saveToGallery();
-              }
-            },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'wallpaper', child: Text('设为壁纸…')),
-              PopupMenuItem(value: 'share-file', child: Text('以文件分享（不压缩）')),
-              PopupMenuItem(value: 'save', child: Text('保存原图到相册')),
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.escape): () =>
+            Navigator.of(context).maybePop(),
+        const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+            _goToPage(_index - 1),
+        const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
+            _goToPage(_index + 1),
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          extendBodyBehindAppBar: true,
+          appBar: AppBar(
+            backgroundColor: Colors.black45,
+            foregroundColor: Colors.white,
+            actions: [
+              if (Platform.isWindows)
+                IconButton(
+                  icon: const Icon(Icons.folder_open_outlined),
+                  tooltip: '在资源管理器中显示',
+                  onPressed: () => MediaChannel.revealInExplorer([
+                    widget.items[_index].path,
+                  ]),
+                )
+              else
+                IconButton(
+                  icon: const Icon(Icons.share_outlined),
+                  tooltip: '分享',
+                  onPressed: _share,
+                ),
+              PopupMenuButton<String>(
+                onSelected: (value) {
+                  switch (value) {
+                    case 'wallpaper':
+                      _setWallpaper();
+                    case 'share-file':
+                      _share(asFile: true);
+                    case 'save':
+                      _saveToGallery();
+                    case 'reveal':
+                      MediaChannel.revealInExplorer([
+                        widget.items[_index].path,
+                      ]);
+                  }
+                },
+                itemBuilder: (_) => [
+                  if (!Platform.isWindows) ...[
+                    const PopupMenuItem(
+                      value: 'wallpaper',
+                      child: Text('设为壁纸…'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'share-file',
+                      child: Text('以文件分享（不压缩）'),
+                    ),
+                  ],
+                  if (Platform.isWindows)
+                    const PopupMenuItem(
+                      value: 'reveal',
+                      child: Text('在资源管理器中显示'),
+                    ),
+                  PopupMenuItem(
+                    value: 'save',
+                    child: Text(
+                      Platform.isWindows ? '保存原图到 Pictures' : '保存原图到相册',
+                    ),
+                  ),
+                ],
+              ),
             ],
+            title: Text(
+              '${_index + 1} / ${widget.items.length} · ${widget.items[_index].title}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 14),
+            ),
           ),
-        ],
-        title: Text(
-          '${_index + 1} / ${widget.items.length} · ${widget.items[_index].title}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 14),
-        ),
-      ),
-      body: Stack(
-        children: [
-          Listener(
-            onPointerDown: (_) {
-              _pointers++;
-              if (_pointers > 1 && mounted) setState(() {});
-            },
-            onPointerUp: (_) {
-              if (_pointers > 0) _pointers--;
-              if (mounted) setState(() {});
-            },
-            onPointerCancel: (_) {
-              if (_pointers > 0) _pointers--;
-              if (mounted) setState(() {});
-            },
-            child: PageView.builder(
-              controller: _controller,
-              // 放大后 PageView 不抢横向手势：左右滑是平移图片，不是翻页。
-              // 第二根手指落下时（_pointers > 1）也先锁住，给捏合让路。
-              physics: (_zoomed || _pointers > 1)
-                  ? const NeverScrollableScrollPhysics()
-                  : const PageScrollPhysics(),
-              itemCount: widget.items.length,
-              onPageChanged: (index) {
-                _zoomAnimation.stop();
-                setState(() {
-                  _index = index;
-                  _zoomed =
-                      _transformFor(index).value.getMaxScaleOnAxis() > 1.01;
-                });
-              },
-              itemBuilder: (context, index) {
-                final item = widget.items[index];
-                final screen = MediaQuery.sizeOf(context);
-                return GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  // 横图整张看的时候只有一条，双击铺满屏高再左右拖
-                  onDoubleTap: () => _toggleZoom(index, screen),
-                  child: InteractiveViewer(
-                    transformationController: _transformFor(index),
-                    minScale: 1,
-                    maxScale: 10,
-                    // 默认 200：要滑很长一段才放大。100 跟手得多。
-                    scaleFactor: 100,
-                    clipBehavior: Clip.none,
-                    // 只在真正的双指手势开始时停掉双击补间；单击/双击的第二下
-                    // 也是 pointerCount == 1，不能在这里停，否则动画刚启动就没了。
-                    onInteractionStart: (details) {
-                      if (details.pointerCount > 1) _zoomAnimation.stop();
-                    },
-                    child: RepaintBoundary(
-                      child: Center(
-                        child: Image.file(
-                          File(item.path),
-                          fit: BoxFit.contain,
-                          // 大图缩放时 mipmap 采样是主要开销；这里 bilinear
-                          // 足够，换帧率。原图 2048px，放大细节不靠滤镜。
-                          filterQuality: FilterQuality.low,
-                          gaplessPlayback: true,
-                          errorBuilder: (_, _, _) => const Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.broken_image_outlined,
-                                color: Colors.white54,
-                                size: 48,
+          body: Stack(
+            children: [
+              Listener(
+                onPointerDown: (_) {
+                  _pointers++;
+                  if (_pointers > 1 && mounted) setState(() {});
+                },
+                onPointerUp: (_) {
+                  if (_pointers > 0) _pointers--;
+                  if (mounted) setState(() {});
+                },
+                onPointerCancel: (_) {
+                  if (_pointers > 0) _pointers--;
+                  if (mounted) setState(() {});
+                },
+                child: PageView.builder(
+                  controller: _controller,
+                  // 放大后 PageView 不抢横向手势：左右滑是平移图片，不是翻页。
+                  // 第二根手指落下时（_pointers > 1）也先锁住，给捏合让路。
+                  physics: (_zoomed || _pointers > 1)
+                      ? const NeverScrollableScrollPhysics()
+                      : const PageScrollPhysics(),
+                  itemCount: widget.items.length,
+                  onPageChanged: (index) {
+                    _zoomAnimation.stop();
+                    setState(() {
+                      _index = index;
+                      _zoomed =
+                          _transformFor(index).value.getMaxScaleOnAxis() > 1.01;
+                    });
+                  },
+                  itemBuilder: (context, index) {
+                    final item = widget.items[index];
+                    final screen = MediaQuery.sizeOf(context);
+                    return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      // 横图整张看的时候只有一条，双击铺满屏高再左右拖
+                      onDoubleTap: () => _toggleZoom(index, screen),
+                      child: InteractiveViewer(
+                        transformationController: _transformFor(index),
+                        minScale: 1,
+                        maxScale: 10,
+                        // 默认 200：要滑很长一段才放大。100 跟手得多。
+                        // Windows 滚轮一个 notch 是 ~120px，100 会一次放 3 倍；
+                        // 桌面用 500，约 1.27 倍/格。
+                        scaleFactor: Platform.isWindows ? 500 : 100,
+                        clipBehavior: Clip.none,
+                        // 只在真正的双指手势开始时停掉双击补间；单击/双击的第二下
+                        // 也是 pointerCount == 1，不能在这里停，否则动画刚启动就没了。
+                        onInteractionStart: (details) {
+                          if (details.pointerCount > 1) _zoomAnimation.stop();
+                        },
+                        child: RepaintBoundary(
+                          child: Center(
+                            child: Image.file(
+                              File(item.path),
+                              fit: BoxFit.contain,
+                              // 大图缩放时 mipmap 采样是主要开销；这里 bilinear
+                              // 足够，换帧率。原图 2048px，放大细节不靠滤镜。
+                              filterQuality: FilterQuality.low,
+                              gaplessPlayback: true,
+                              errorBuilder: (_, _, _) => const Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.broken_image_outlined,
+                                    color: Colors.white54,
+                                    size: 48,
+                                  ),
+                                  SizedBox(height: 8),
+                                  Text(
+                                    '图片读取失败',
+                                    style: TextStyle(color: Colors.white54),
+                                  ),
+                                ],
                               ),
-                              SizedBox(height: 8),
-                              Text(
-                                '图片读取失败',
-                                style: TextStyle(color: Colors.white54),
-                              ),
-                            ],
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          // 只有横图需要提示：竖图本来就没有「放大到屏高」的必要
-          if (widget.items[_index].aspectRatio > 1.4)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: MediaQuery.paddingOf(context).bottom + 24,
-              child: const IgnorePointer(
-                child: Center(child: _ViewerHint(text: '双击切换大小 · 拖动查看')),
+                    );
+                  },
+                ),
               ),
-            ),
-        ],
+              // 只有横图需要提示：竖图本来就没有「放大到屏高」的必要
+              if (widget.items[_index].aspectRatio > 1.4)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: MediaQuery.paddingOf(context).bottom + 24,
+                  child: const IgnorePointer(
+                    child: Center(child: _ViewerHint(text: '双击切换大小 · 拖动查看')),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

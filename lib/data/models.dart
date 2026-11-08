@@ -68,25 +68,25 @@ class ImageRow {
   }
 
   ImageRow copyWith({bool? isFavorite}) => ImageRow(
-        id: id,
-        libraryId: libraryId,
-        path: path,
-        filename: filename,
-        fileSize: fileSize,
-        modifiedAt: modifiedAt,
-        isFavorite: isFavorite ?? this.isFavorite,
-        rating: rating,
-        width: width,
-        height: height,
-        pid: pid,
-        artistUid: artistUid,
-        mediaId: mediaId,
-        pageTotal: pageTotal,
-        xRestrict: xRestrict,
-        title: title,
-        artistName: artistName,
-        artistAccount: artistAccount,
-      );
+    id: id,
+    libraryId: libraryId,
+    path: path,
+    filename: filename,
+    fileSize: fileSize,
+    modifiedAt: modifiedAt,
+    isFavorite: isFavorite ?? this.isFavorite,
+    rating: rating,
+    width: width,
+    height: height,
+    pid: pid,
+    artistUid: artistUid,
+    mediaId: mediaId,
+    pageTotal: pageTotal,
+    xRestrict: xRestrict,
+    title: title,
+    artistName: artistName,
+    artistAccount: artistAccount,
+  );
 }
 
 class ArtworkRow {
@@ -127,21 +127,21 @@ class ArtworkRow {
   final bool favorite;
 
   ArtworkRow copyWith({bool? favorite}) => ArtworkRow(
-        id: id,
-        pid: pid,
-        originalPath: originalPath,
-        page: page,
-        width: width,
-        height: height,
-        title: title,
-        artistName: artistName,
-        artistAccount: artistAccount,
-        pageCount: pageCount,
-        xRestrict: xRestrict,
-        mediaId: mediaId,
-        pageTotal: pageTotal,
-        favorite: favorite ?? this.favorite,
-      );
+    id: id,
+    pid: pid,
+    originalPath: originalPath,
+    page: page,
+    width: width,
+    height: height,
+    title: title,
+    artistName: artistName,
+    artistAccount: artistAccount,
+    pageCount: pageCount,
+    xRestrict: xRestrict,
+    mediaId: mediaId,
+    pageTotal: pageTotal,
+    favorite: favorite ?? this.favorite,
+  );
 
   /// 瀑布流每格的高宽比：老行没有宽高时按 3:4 兜底（桌面同语义）。
   double get aspectRatio {
@@ -223,8 +223,7 @@ class ArtworkDetail {
   /// 详情页要不要挂「AI生成」：Pixiv 标记为准，旧数据用 AI 标签兜底。
   bool get isAiGenerated => aiType == 2 || tags.any(looksLikeAiTag);
 
-  String get displayTitle =>
-      (title?.isNotEmpty ?? false) ? title! : 'PID $pid';
+  String get displayTitle => (title?.isNotEmpty ?? false) ? title! : 'PID $pid';
 
   /// 画师显示名：优先昵称，其次账号名，都没有就只剩 UID。
   String get artistLabel {
@@ -234,7 +233,8 @@ class ArtworkDetail {
   }
 }
 
-class ArtistCount {  ArtistCount(this.uid, this.name, this.count);
+class ArtistCount {
+  ArtistCount(this.uid, this.name, this.count);
 
   final String uid;
   final String name;
@@ -339,6 +339,7 @@ class MediaImageDto {
     required this.modified,
     required this.width,
     required this.height,
+    this.absolutePath,
   });
 
   final int id;
@@ -351,8 +352,27 @@ class MediaImageDto {
   final int width;
   final int height;
 
-  /// FUSE 直读路径。与 Kotlin 桥同款：相对路径 + 存储根前缀。
-  String get path => '/storage/emulated/0/$relativePath/$name';
+  /// 桌面端扫描出来的绝对路径；Android 为 null。
+  final String? absolutePath;
+
+  /// FUSE 直读路径。与 Kotlin 桥同款：相对路径 + 存储根前缀；
+  /// 桌面端直接用 [absolutePath]。
+  String get path => absolutePath ?? '/storage/emulated/0/$relativePath/$name';
+}
+
+/// 已入库图片的大小/时间/宽高快照：桌面扫描时用来跳过没变文件的图片头读取。
+class KnownImageSize {
+  const KnownImageSize({
+    required this.size,
+    required this.modified,
+    required this.width,
+    required this.height,
+  });
+
+  final int size;
+  final int modified;
+  final int width;
+  final int height;
 }
 
 /// 设置页顶部的数据概览（一次查询取完，别在 UI 里连开五条 COUNT）。
@@ -381,7 +401,14 @@ class GalleryStats {
 }
 
 class ScanSummary {
-  ScanSummary(this.discovered, this.matched, this.inserted, this.duplicates, this.skipped, this.ignored);
+  ScanSummary(
+    this.discovered,
+    this.matched,
+    this.inserted,
+    this.duplicates,
+    this.skipped,
+    this.ignored,
+  );
 
   final int discovered;
   final int matched;
@@ -420,14 +447,13 @@ class ScanSummary {
 
 /// 从路径反推画师：pixez 落盘目录是 `<画师名>_<画师ID>/<pid>_p<n>`。
 /// 与 Rust `parse_artist` 的规则一致（整名数字 / 无 `_` / 名字空都判不出）。
+/// 正反斜杠都接受：Windows 桌面端的路径是 `C:\...\Artist_1\...`。
 (String uid, String name)? parseArtist(String path) {
-  final slash = path.lastIndexOf('/');
+  final normalized = path.replaceAll('\\', '/');
+  final slash = normalized.lastIndexOf('/');
   if (slash <= 0) return null;
-  var dir = path.substring(0, slash);
-  final backslash = dir.lastIndexOf('\\');
-  if (backslash >= 0) dir = dir.substring(backslash + 1);
-  final slash2 = dir.lastIndexOf('/');
-  if (slash2 >= 0) dir = dir.substring(slash2 + 1);
+  final parentSlash = normalized.lastIndexOf('/', slash - 1);
+  final dir = normalized.substring(parentSlash + 1, slash);
 
   var digitsStart = dir.length;
   while (digitsStart > 0 &&

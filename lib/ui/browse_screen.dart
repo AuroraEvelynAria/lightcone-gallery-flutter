@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../data/models.dart';
@@ -92,8 +94,11 @@ class _BrowseScreenState extends State<BrowseScreen> {
     final q = _query.trim().toLowerCase();
     if (q.isEmpty) return _galleries;
     return _galleries
-        .where((g) => g.name.toLowerCase().contains(q) ||
-            g.tags.any((t) => t.toLowerCase().contains(q)))
+        .where(
+          (g) =>
+              g.name.toLowerCase().contains(q) ||
+              g.tags.any((t) => t.toLowerCase().contains(q)),
+        )
         .toList();
   }
 
@@ -128,7 +133,9 @@ class _BrowseScreenState extends State<BrowseScreen> {
                       },
                     ),
               isDense: true,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
           ),
         ),
@@ -189,7 +196,9 @@ class _BrowseScreenState extends State<BrowseScreen> {
               // 只显示批量补好的头像（fetch=false）：一屏几十行不能逐行联网
               leading: ArtistAvatarView(
                 // dataVersion 变了就换 key：补完头像后不用重启/切 tab
-                key: ValueKey('avatar-${artist.uid}-${widget.state.dataVersion}'),
+                key: ValueKey(
+                  'avatar-${artist.uid}-${widget.state.dataVersion}',
+                ),
                 state: widget.state,
                 uid: artist.uid,
                 name: artist.name,
@@ -239,53 +248,148 @@ class _BrowseScreenState extends State<BrowseScreen> {
                 title: const Text('只看 AI 生成的作品'),
                 subtitle: const Text('Pixiv AI 标记 / AI 标签汇总'),
                 trailing: Text('$_aiCount 张'),
-                onTap: () => _openFiltered(
-                  context,
-                  title: 'AI生成',
-                  aiOnly: true,
-                ),
+                onTap: () =>
+                    _openFiltered(context, title: 'AI生成', aiOnly: true),
               );
             }
             final tag = visible[showAi ? index - 1 : index];
             return ListTile(
               title: Text(tag.tag),
               trailing: Text('${tag.count} 张'),
-              onTap: () => _openFiltered(
-                context,
-                title: '#${tag.tag}',
-                tags: [tag.tag],
-              ),
+              onTap: () =>
+                  _openFiltered(context, title: '#${tag.tag}', tags: [tag.tag]),
             );
           },
         );
       default:
-        if (galleries.isEmpty) {
-          return const Center(
-            child: Text('还没有标签画廊\n在桌面端建好画廊后，这里会同步显示'),
-          );
-        }
-        return ListView.builder(
-          itemCount: galleries.length,
-          itemBuilder: (context, index) {
-            final gallery = galleries[index];
-            return ListTile(
-              leading: const Icon(Icons.collections_bookmark_outlined),
-              title: Text(gallery.name),
-              subtitle: Text(
-                gallery.tags.isEmpty ? '空画廊' : gallery.tags.join(' · '),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+        final body = galleries.isEmpty
+            ? Center(
+                child: Text(
+                  Platform.isWindows
+                      ? '还没有标签画廊\n点上方「新建画廊」创建第一个'
+                      : '还没有标签画廊\n在桌面端建好画廊后，这里会同步显示',
+                  textAlign: TextAlign.center,
+                ),
+              )
+            : ListView.builder(
+                itemCount: galleries.length,
+                itemBuilder: (context, index) {
+                  final gallery = galleries[index];
+                  return ListTile(
+                    leading: const Icon(Icons.collections_bookmark_outlined),
+                    title: Text(gallery.name),
+                    subtitle: Text(
+                      gallery.tags.isEmpty ? '空画廊' : gallery.tags.join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (gallery.rating >= 0) Text('≥${gallery.rating}★'),
+                        if (Platform.isWindows)
+                          PopupMenuButton<String>(
+                            tooltip: '画廊操作',
+                            onSelected: (value) {
+                              if (value == 'edit') {
+                                _editGallery(gallery);
+                              } else if (value == 'delete') {
+                                _deleteGallery(gallery);
+                              }
+                            },
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(value: 'edit', child: Text('编辑画廊')),
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: Text('删除画廊'),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
+                    onTap: () => _openFiltered(
+                      context,
+                      title: gallery.name,
+                      tags: gallery.tags,
+                      matchAny: gallery.matchMode == 'any',
+                    ),
+                  );
+                },
+              );
+        if (!Platform.isWindows) return body;
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Row(
+                children: [
+                  Text('标签画廊', style: Theme.of(context).textTheme.titleSmall),
+                  const Spacer(),
+                  FilledButton.icon(
+                    onPressed: _createGallery,
+                    icon: const Icon(Icons.add),
+                    label: const Text('新建画廊'),
+                  ),
+                ],
               ),
-              trailing: gallery.rating >= 0 ? Text('≥${gallery.rating}★') : null,
-              onTap: () => _openFiltered(
-                context,
-                title: gallery.name,
-                tags: gallery.tags,
-              ),
-            );
-          },
+            ),
+            Expanded(child: body),
+          ],
         );
     }
+  }
+
+  Future<void> _createGallery() async {
+    final draft = await showDialog<_GalleryDraft>(
+      context: context,
+      builder: (_) => const _GalleryEditorDialog(),
+    );
+    if (draft == null || !mounted) return;
+    await widget.state.repo.createTagGallery(
+      name: draft.name,
+      tags: draft.tags,
+      matchMode: draft.matchMode,
+    );
+    widget.state.bumpData();
+  }
+
+  Future<void> _editGallery(TagGalleryRow gallery) async {
+    final draft = await showDialog<_GalleryDraft>(
+      context: context,
+      builder: (_) => _GalleryEditorDialog(initial: gallery),
+    );
+    if (draft == null || !mounted) return;
+    await widget.state.repo.updateTagGallery(
+      gallery.id,
+      name: draft.name,
+      tags: draft.tags,
+      matchMode: draft.matchMode,
+      rating: gallery.rating,
+    );
+    widget.state.bumpData();
+  }
+
+  Future<void> _deleteGallery(TagGalleryRow gallery) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('删除「${gallery.name}」？'),
+        content: const Text('只删画廊本身，不会删作品。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await widget.state.repo.deleteTagGallery(gallery.id);
+    widget.state.bumpData();
   }
 
   void _openFiltered(
@@ -293,6 +397,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
     required String title,
     String? artistUid,
     List<String> tags = const [],
+    bool matchAny = false,
     bool aiOnly = false,
   }) {
     Navigator.of(context).push(
@@ -302,6 +407,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
           title: title,
           artistUid: artistUid,
           tags: tags,
+          tagsMatchAny: matchAny,
           aiOnly: aiOnly,
         ),
       ),
@@ -318,6 +424,132 @@ class _BrowseScreenState extends State<BrowseScreen> {
           initialName: artist.name,
         ),
       ),
+    );
+  }
+}
+
+class _GalleryDraft {
+  const _GalleryDraft(this.name, this.tags, this.matchMode);
+
+  final String name;
+  final List<String> tags;
+  final String matchMode;
+}
+
+/// 桌面端标签画廊编辑：名称 + 标签 + any/all。Android 依旧是只读。
+class _GalleryEditorDialog extends StatefulWidget {
+  const _GalleryEditorDialog({this.initial});
+
+  final TagGalleryRow? initial;
+
+  @override
+  State<_GalleryEditorDialog> createState() => _GalleryEditorDialogState();
+}
+
+class _GalleryEditorDialogState extends State<_GalleryEditorDialog> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _tagsController;
+  late String _matchMode;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initial;
+    _nameController = TextEditingController(text: initial?.name ?? '');
+    _tagsController = TextEditingController(
+      text: initial?.tags.join(', ') ?? '',
+    );
+    _matchMode = initial?.matchMode == 'any' ? 'any' : 'all';
+    _nameController.addListener(_onChanged);
+    _tagsController.addListener(_onChanged);
+  }
+
+  void _onChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _tagsController.dispose();
+    super.dispose();
+  }
+
+  List<String> get _tags => _tagsController.text
+      .split(RegExp(r'[,，、\s]+'))
+      .map((tag) => tag.trim())
+      .where((tag) => tag.isNotEmpty)
+      .toSet()
+      .toList(growable: false);
+
+  bool get _canSave =>
+      _nameController.text.trim().isNotEmpty && _tags.isNotEmpty;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.initial == null ? '新建标签画廊' : '编辑标签画廊'),
+      content: SizedBox(
+        width: 440,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _nameController,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: '名称',
+                hintText: '例如：全年龄 / 蓝色系',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _tagsController,
+              minLines: 2,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: '标签',
+                hintText: '用逗号或空格分隔',
+                helperText: '点进画廊时按这些标签筛作品',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(
+                  value: 'all',
+                  label: Text('同时满足'),
+                  icon: Icon(Icons.join_inner),
+                ),
+                ButtonSegment(
+                  value: 'any',
+                  label: Text('任一满足'),
+                  icon: Icon(Icons.join_full),
+                ),
+              ],
+              selected: {_matchMode},
+              onSelectionChanged: (values) =>
+                  setState(() => _matchMode = values.first),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _canSave
+              ? () => Navigator.pop(
+                  context,
+                  _GalleryDraft(_nameController.text.trim(), _tags, _matchMode),
+                )
+              : null,
+          child: const Text('保存'),
+        ),
+      ],
     );
   }
 }

@@ -1,7 +1,7 @@
 # 光锥图库 · LightCone Gallery（Android / Windows · Flutter）
 
 > 本地优先的 Pixiv 作品仓库：索引 pixez 下载到的图，按作品归组、竖排长图看画，
-> 收藏 / 评分 / 标签画廊全部离线可用。与桌面端
+> 收藏 / 评分 / 标签画廊全部离线可用。与 Tauri 版
 > [lightcone-gallery](https://github.com/AuroraEvelynAria/lightcone-gallery)
 > 共用同一套 schema v12，元数据、收藏与评分可以在两端之间合并。
 
@@ -91,7 +91,8 @@ Windows 端是 MVP，暂不含安装包、分享与壁纸功能。
 
 ## 为什么换 Flutter，以及它为什么流畅
 
-> 这是双端的第三个实现：Tauri/WebView → Kotlin/Compose → **Flutter**。
+> 这是第三个实现（Tauri/WebView → Kotlin/Compose → **Flutter**），也是第一个
+> Android + Windows 双端版本。
 > 换栈的原因不是框架崇拜，而是**流畅度**：参照片源客户端 pixez 的做法，
 > 把「网格里显示什么」和「构建产物」这两件事做对。
 

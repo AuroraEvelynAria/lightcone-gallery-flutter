@@ -5,6 +5,16 @@
 > [lightcone-gallery](https://github.com/AuroraEvelynAria/lightcone-gallery)
 > 共用同一套 schema v12，元数据、收藏与评分可以在两端之间合并。
 
+## 下载
+
+- **Windows x64**：[lightcone-gallery-windows-x64-v1.1.0.zip](https://github.com/AuroraEvelynAria/lightcone-gallery-flutter/releases/download/v1.1.0/lightcone-gallery-windows-x64-v1.1.0.zip)
+  —— 解压后双击 `lightcone_flutter.exe`，首次启动选一个含 `{pid}_p{n}` 的目录。
+- **Android**：[lightcone-gallery-android-v1.1.0.apk](https://github.com/AuroraEvelynAria/lightcone-gallery-flutter/releases/download/v1.1.0/lightcone-gallery-android-v1.1.0.apk)
+  —— Android 8.0+，release 包用 debug 签名，可直接覆盖安装。
+
+两端的元数据、收藏、评分与标签画廊可以通过「元数据包」或整库备份互传；
+Windows 端是 MVP，暂不含安装包、分享与壁纸功能。
+
 <p align="center">
   <a href="docs/screenshots/gallery.jpg"><img src="docs/screenshots/gallery.jpg" width="70%" alt="图库：一个作品一张卡" /></a>
   <br /><sub>图库：一个作品一张卡，右下角标页数；预览库只有这一件作品</sub>
@@ -81,7 +91,7 @@
 
 ## 为什么换 Flutter，以及它为什么流畅
 
-> 这是手机端的第三个实现：Tauri/WebView → Kotlin/Compose → **Flutter**。
+> 这是双端的第三个实现：Tauri/WebView → Kotlin/Compose → **Flutter**。
 > 换栈的原因不是框架崇拜，而是**流畅度**：参照片源客户端 pixez 的做法，
 > 把「网格里显示什么」和「构建产物」这两件事做对。
 

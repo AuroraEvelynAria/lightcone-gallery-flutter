@@ -29,7 +29,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   // 与 pubspec.yaml 的 version 保持一致（没有引 package_info：为一行版本号
   // 多一个插件不划算）
-  static const _version = '1.0.0+1';
+  static const _version = '1.1.0+2';
 
   GalleryStats? _stats;
   int? _pending;

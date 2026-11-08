@@ -332,6 +332,7 @@ class Repository {
     List<String> tags = const [],
     int xRestrict = -1,
     bool favoriteOnly = false,
+    bool aiOnly = false,
     required int offset,
     required int limit,
   }) async {
@@ -340,6 +341,15 @@ class Repository {
     if (artistUid != null) {
       clauses.add('a.artist_uid = ?');
       args.add(artistUid);
+    }
+    if (aiOnly) {
+      final placeholders = List.filled(kAiTags.length, '?').join(',');
+      clauses.add(
+        '(EXISTS (SELECT 1 FROM illust_tags it WHERE it.pid = a.pid '
+        'AND lower(trim(it.tag)) IN ($placeholders)) '
+        'OR EXISTS (SELECT 1 FROM illust_ai ia WHERE ia.pid = a.pid AND ia.ai_type = 2))',
+      );
+      args.addAll(kAiTags);
     }
     for (final tag in tags) {
       clauses.add('a.pid IN (SELECT pid FROM illust_tags WHERE tag = ?)');
@@ -457,6 +467,12 @@ class Repository {
       'SELECT MAX(modified_at) AS saved FROM images WHERE pid = ?',
       [pid],
     );
+    final aiRows = await db.query(
+      'illust_ai',
+      columns: ['ai_type'],
+      where: 'pid = ?',
+      whereArgs: [pid],
+    );
     final meta = metaRows.isEmpty ? null : metaRows.first;
     return ArtworkDetail(
       pid: pid,
@@ -472,11 +488,25 @@ class Repository {
       favorite: favorite,
       rating: (ratingRows.first['r'] as int?) ?? 0,
       savedAt: (savedRows.first['saved'] as int?) ?? 0,
+      aiType: aiRows.isEmpty ? 0 : (aiRows.first['ai_type'] as int?) ?? 0,
     );
   }
 
   Future<int> artworkCount() async {    final result = await db.rawQuery('SELECT COUNT(*) c FROM artworks');
     return (result.first['c'] as int?) ?? 0;
+  }
+
+  /// AI 生成的作品数（Pixiv 标记 ∪ AI 标签），给分类页的合成标签用。
+  Future<int> aiArtworkCount() async {
+    final placeholders = List.filled(kAiTags.length, '?').join(',');
+    final row = await db.rawQuery(
+      'SELECT COUNT(DISTINCT a.pid) c FROM artworks a WHERE '
+      'EXISTS (SELECT 1 FROM illust_tags it WHERE it.pid = a.pid '
+      'AND lower(trim(it.tag)) IN ($placeholders)) '
+      'OR EXISTS (SELECT 1 FROM illust_ai ia WHERE ia.pid = a.pid AND ia.ai_type = 2)',
+      kAiTags,
+    );
+    return (row.first['c'] as int?) ?? 0;
   }
 
   /// 画师维度计数。**默认不截断**：`cnt DESC` 走聚合，6k 作品/1.5k 画师毫秒级；
@@ -962,11 +992,21 @@ class Repository {
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
 
-  Future<void> storeMeta(Map<String, Object?> meta, List<String> tags) async {
+  Future<void> storeMeta(
+    Map<String, Object?> meta,
+    List<String> tags, {
+    int aiType = 0,
+  }) async {
     await db.transaction((txn) async {
       await txn.insert('illust_meta', meta, conflictAlgorithm: ConflictAlgorithm.replace);
       await txn.delete('illust_tags', where: 'pid = ?', whereArgs: [meta['pid']]);
       final batch = txn.batch();
+      // 私有表：Pixiv 的 AI 标记；0 也写，顺手覆盖旧值
+      batch.insert(
+        'illust_ai',
+        {'pid': meta['pid'], 'ai_type': aiType},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
       for (final tag in tags) {
         batch.insert('illust_tags', {'pid': meta['pid'], 'tag': tag},
             conflictAlgorithm: ConflictAlgorithm.ignore);

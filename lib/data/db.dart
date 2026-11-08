@@ -30,11 +30,13 @@ class LightConeDb {
           batch.execute(sql);
         }
         batch.execute(kMediaIdsTable);
+        batch.execute(kIllustAiTable);
         await batch.commit(noResult: true);
       },
       onOpen: (db) async {
         // 导入的桌面库没有私有表：每次打开补建（幂等）
         await db.execute(kMediaIdsTable);
+        await db.execute(kIllustAiTable);
         // 与桌面一致：移除图库要级联清 images
         await db.execute('PRAGMA foreign_keys = ON');
       },

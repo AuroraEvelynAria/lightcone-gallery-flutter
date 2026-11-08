@@ -187,6 +187,15 @@ CREATE TABLE IF NOT EXISTS media_ids (
 )
 ''';
 
+/// 本端私有表：Pixiv 的 AI 生成标记（`illustAIType == 2`）。
+/// 桌面 schema 没有这一列，所以单独放；老数据没有行时用 AI 标签兜底。
+const String kIllustAiTable = '''
+CREATE TABLE IF NOT EXISTS illust_ai (
+    pid     TEXT PRIMARY KEY,
+    ai_type INTEGER NOT NULL DEFAULT 0
+)
+''';
+
 /// 桌面备份里必须存在的表（与 Kotlin 版 BackupImporter 的校验一致）。
 const List<String> kRequiredTables = [
   'libraries', 'images', 'albums', 'album_images', 'tags', 'image_tags',

@@ -416,9 +416,25 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
     );
   }
 
+  void _openAiFiltered() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => FilteredArtworksScreen(
+          state: widget.state,
+          title: 'AI生成',
+          aiOnly: true,
+        ),
+      ),
+    );
+  }
+
   Widget _buildInfo(ArtworkDetail detail) {
     final theme = Theme.of(context);
     final artistUid = detail.artistUid;
+    final ai = detail.isAiGenerated;
+    final tags = ai
+        ? detail.tags.where((t) => !looksLikeAiTag(t)).toList(growable: false)
+        : detail.tags;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
       child: Column(
@@ -515,13 +531,29 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
                 ),
             ],
           ),
-          if (detail.tags.isNotEmpty) ...[
+          if (ai || tags.isNotEmpty) ...[
             const SizedBox(height: 18),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                for (final tag in detail.tags)
+                // 合成标签放在首位：黑底白字，点它看全部 AI 生成作品
+                if (ai)
+                  ActionChip(
+                    label: const Text('AI生成'),
+                    labelStyle: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    backgroundColor: Colors.black,
+                    side: BorderSide.none,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    onPressed: _openAiFiltered,
+                  ),
+                for (final tag in tags)
                   ActionChip(
                     label: Text(tag),
                     onPressed: () {

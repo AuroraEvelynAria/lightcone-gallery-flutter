@@ -16,12 +16,16 @@ class FilteredArtworksScreen extends StatefulWidget {
     required this.title,
     this.artistUid,
     this.tags = const [],
+    this.aiOnly = false,
   });
 
   final AppState state;
   final String title;
   final String? artistUid;
   final List<String> tags;
+
+  /// 只看 AI 生成（Pixiv 标记 ∪ AI 标签）。
+  final bool aiOnly;
 
   @override
   State<FilteredArtworksScreen> createState() => _FilteredArtworksScreenState();
@@ -56,6 +60,7 @@ class _FilteredArtworksScreenState extends State<FilteredArtworksScreen> {
     final page = await widget.state.repo.artworksPage(
       artistUid: widget.artistUid,
       tags: widget.tags,
+      aiOnly: widget.aiOnly,
       offset: _rows.length,
       limit: _pageSize,
     );

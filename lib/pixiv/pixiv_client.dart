@@ -176,6 +176,7 @@ class PixivClient {
         illustType: _int(body['illustType']),
         createDate: text('createDate').isEmpty ? null : text('createDate'),
         tags: tags,
+        aiType: _int(body['illustAIType']),
       ),
     );
   }
@@ -235,7 +236,7 @@ class PixivClient {
             'fetched_at': DateTime.now().millisecondsSinceEpoch ~/ 1000,
             'error': null,
             'missing': 0,
-          }, meta.tags);
+          }, meta.tags, aiType: meta.aiType);
         case FetchMissing():
           consecutive = 0;
           missing++;
@@ -290,6 +291,7 @@ class PixivMeta {
     required this.illustType,
     required this.createDate,
     required this.tags,
+    this.aiType = 0,
   });
 
   final String pid;
@@ -303,6 +305,9 @@ class PixivMeta {
   final int illustType;
   final String? createDate;
   final List<String> tags;
+
+  /// Pixiv 的 `illustAIType`（2 = AI 生成）。
+  final int aiType;
 }
 
 sealed class FetchOutcome {

@@ -20,6 +20,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
   List<ArtistCount> _artists = const [];
   List<TagCount> _tags = const [];
   List<TagGalleryRow> _galleries = const [];
+  int _aiCount = 0;
   bool _loading = true;
   int _tab = 0;
   int _lastVersion = 0;
@@ -54,11 +55,13 @@ class _BrowseScreenState extends State<BrowseScreen> {
     final artists = await repo.artistCounts();
     final tags = await repo.tagCounts();
     final galleries = await repo.tagGalleries();
+    final aiCount = await repo.aiArtworkCount();
     if (!mounted) return;
     setState(() {
       _artists = artists;
       _tags = tags;
       _galleries = galleries;
+      _aiCount = aiCount;
       _loading = false;
     });
   }
@@ -76,6 +79,12 @@ class _BrowseScreenState extends State<BrowseScreen> {
     final q = _query.trim().toLowerCase();
     if (q.isEmpty) return _tags;
     return _tags.where((t) => t.tag.toLowerCase().contains(q)).toList();
+  }
+
+  /// 合成的「AI生成」标签：空搜索或搜 AI 时置顶，别的时候不占位置。
+  bool get _showAi {
+    final q = _query.trim().toLowerCase();
+    return q.isEmpty || 'ai生成'.contains(q) || 'ai'.contains(q);
   }
 
   /// 画廊按名字过滤（桌面存的组合，数量一般不多）。
@@ -193,11 +202,49 @@ class _BrowseScreenState extends State<BrowseScreen> {
           },
         );
       case 1:
-        if (tags.isEmpty) return const Center(child: Text('没有匹配的标签'));
+        // 原始 AI 标签（AI生成 / AIイラスト / ai…）都被合成标签收编，
+        // 避免同一个意思在列表里出现七八次。
+        final visible = tags
+            .where((t) => !looksLikeAiTag(t.tag))
+            .toList(growable: false);
+        final showAi = _showAi;
+        if (visible.isEmpty && !showAi) {
+          return const Center(child: Text('没有匹配的标签'));
+        }
         return ListView.builder(
-          itemCount: tags.length,
+          itemCount: visible.length + (showAi ? 1 : 0),
           itemBuilder: (context, index) {
-            final tag = tags[index];
+            if (showAi && index == 0) {
+              return ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    'AI生成',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                title: const Text('只看 AI 生成的作品'),
+                subtitle: const Text('Pixiv AI 标记 / AI 标签汇总'),
+                trailing: Text('$_aiCount 张'),
+                onTap: () => _openFiltered(
+                  context,
+                  title: 'AI生成',
+                  aiOnly: true,
+                ),
+              );
+            }
+            final tag = visible[showAi ? index - 1 : index];
             return ListTile(
               title: Text(tag.tag),
               trailing: Text('${tag.count} 张'),
@@ -244,6 +291,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
     required String title,
     String? artistUid,
     List<String> tags = const [],
+    bool aiOnly = false,
   }) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -252,6 +300,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
           title: title,
           artistUid: artistUid,
           tags: tags,
+          aiOnly: aiOnly,
         ),
       ),
     );

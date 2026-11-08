@@ -151,6 +151,34 @@ class ArtworkRow {
   }
 }
 
+/// Pixiv 的「AI 生成」标记在不同语种里写法很多，标签库里见过这些。
+/// 只做**全名匹配**（大小写不敏感），避免把 Honkai 这类含 "ai" 的词误判。
+const List<String> kAiTags = [
+  'ai',
+  'ai生成',
+  'aiイラスト',
+  'ai绘画',
+  'ai绘图',
+  'ai繪圖',
+  'ai-generated',
+  'ai-assisted',
+  'ai-helpes',
+  'aiart',
+  'ai art',
+  'ai画像',
+  'ai作品',
+  'ai絵',
+  'stable diffusion',
+  'novelai',
+  'midjourney',
+  'nijijourney',
+];
+
+bool looksLikeAiTag(String tag) {
+  final value = tag.trim().toLowerCase();
+  return kAiTags.contains(value);
+}
+
 /// 作品详情页：一个 PID 的元数据、标签与所有页（pixez 详情页同款信息层级）。
 class ArtworkDetail {
   ArtworkDetail({
@@ -167,6 +195,7 @@ class ArtworkDetail {
     required this.favorite,
     this.rating = 0,
     this.savedAt,
+    this.aiType = 0,
   });
 
   final String pid;
@@ -187,6 +216,12 @@ class ArtworkDetail {
   /// 本地这份文件的保存时间（秒级时间戳，取组内最大 modified_at）。
   /// null = 本机没有对应的 images 行。
   final int? savedAt;
+
+  /// Pixiv 的 `illustAIType`（2 = AI 生成；0 = 旧数据/未知）。
+  final int aiType;
+
+  /// 详情页要不要挂「AI生成」：Pixiv 标记为准，旧数据用 AI 标签兜底。
+  bool get isAiGenerated => aiType == 2 || tags.any(looksLikeAiTag);
 
   String get displayTitle =>
       (title?.isNotEmpty ?? false) ? title! : 'PID $pid';

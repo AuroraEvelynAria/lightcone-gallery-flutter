@@ -11,6 +11,7 @@ import 'state/app_state.dart';
 import 'ui/home_shell.dart';
 import 'ui/onboarding_screen.dart';
 import 'ui/palettes.dart';
+import 'ui/tone.dart';
 import 'ui/splash_screen.dart';
 
 void main() {
@@ -189,19 +190,24 @@ class _LightConeBootstrapState extends State<LightConeBootstrap> {
 
 /// 配色：种子色与深色底都跟着色板走（设置里可换）。
 ThemeData _theme(Brightness brightness, ThemePalette palette) {
-  final scheme = ColorScheme.fromSeed(
-    seedColor: palette.seed,
-    brightness: brightness,
-    surface: brightness == Brightness.dark
-        ? palette.darkSurface
-        : const Color(0xFFF7F8FC),
-  );
+  // 有显式令牌就按令牌来（Tauri 那套工业配色）；没有才回退到种子推导。
+  final tones = palette.tones?.of(brightness);
+  final scheme = tones != null
+      ? colorSchemeFromTones(tones, brightness)
+      : ColorScheme.fromSeed(
+          seedColor: palette.seed,
+          brightness: brightness,
+          surface: brightness == Brightness.dark
+              ? palette.darkSurface
+              : const Color(0xFFF7F8FC),
+        );
   final base = ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
     scaffoldBackgroundColor: scheme.surface,
     splashFactory: InkSparkle.splashFactory,
     visualDensity: VisualDensity.standard,
+    extensions: tones == null ? null : <ThemeExtension<dynamic>>[ToneTokens(tones)],
   );
   if (!Platform.isWindows) return base;
   // Windows 默认的 Roboto/Segoe UI 对中文会落到不同的系统回退字体，

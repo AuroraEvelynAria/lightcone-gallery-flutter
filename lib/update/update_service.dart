@@ -151,16 +151,37 @@ class UpdateService {
 
     final notes = await _fetchNotes(dio, tag);
 
+    // latest/download 会跳到真正的最新资产，地址不用带版本号。
+    final url =
+        'https://github.com/$_repo/releases/latest/download/$_assetName';
+
     _cached = UpdateInfo(
       version: version,
       notes: notes,
-      // latest/download 会跳到真正的最新资产，地址不用带版本号。
-      downloadUrl:
-          'https://github.com/$_repo/releases/latest/download/$_assetName',
+      downloadUrl: url,
       fileName: _assetName,
-      sizeBytes: 0,
+      // 用户点更新前该知道要下多大，尤其国内这个网速。
+      sizeBytes: await _probeSize(dio, url),
     );
     return _cached;
+  }
+
+  /// 问一下资产有多大：HEAD 跟完重定向后从 Content-Length 取。
+  /// 失败就返回 0 —— 少显示一行大小，不该让整个检查失败。
+  static Future<int> _probeSize(Dio dio, String url) async {
+    try {
+      final res = await dio.head<dynamic>(
+        url,
+        options: Options(
+          followRedirects: true,
+          validateStatus: (_) => true,
+        ),
+      );
+      if (res.statusCode != 200) return 0;
+      return int.tryParse(res.headers.value('content-length') ?? '') ?? 0;
+    } catch (_) {
+      return 0;
+    }
   }
 
   /// 更新说明只有 API 有。拿不到就算了 —— 限流不该连累版本检查。

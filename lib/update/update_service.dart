@@ -33,11 +33,15 @@ class UpdateInfo {
       : '${(sizeBytes / 1024 / 1024).toStringAsFixed(1)} MB';
 }
 
+/// 失败原因分类：UI 靠它决定给什么按钮（限流不该显示「去授权」）。
+enum UpdateErrorKind { network, rateLimit, install, other }
+
 /// 检查更新失败的原因，交给 UI 决定怎么措辞。
 class UpdateException implements Exception {
-  const UpdateException(this.message);
+  const UpdateException(this.message, {this.kind = UpdateErrorKind.other});
 
   final String message;
+  final UpdateErrorKind kind;
 
   @override
   String toString() => message;
@@ -53,6 +57,13 @@ class UpdateService {
   UpdateService._();
 
   static const _repo = 'AuroraEvelynAria/lightcone-gallery-flutter';
+
+  /// Release 资产的固定文件名。
+  ///
+  /// 不能带版本号：检查更新走的是 releases/latest 的 302 重定向，只拿得到
+  /// tag，拼不出「带版本号的资产名」。固定名还能让下载地址直接指向
+  /// /releases/latest/download/...，完全不经过 API。
+  static const _assetName = 'lightcone-gallery-android.apk';
   static const _channel = MethodChannel('com.lightcone.gallery/update');
 
   /// GitHub 匿名访问是 60 次/小时/IP，走代理时出口还是共享 IP。
@@ -108,63 +119,64 @@ class UpdateService {
     }
 
     final dio = _buildDio(proxy);
-    final Response<dynamic> res;
+
+    // 用 releases/latest 的 302 拿 tag，不碰 API。
+    // 匿名 API 是 60 次/小时/IP，国内走代理时出口 IP 常常早被别人用光，
+    // 一旦限流整个检查就废了；而 releases 的跳转由 CDN 承担，不限流。
+    String? tag;
     try {
-      res = await dio.get<dynamic>(
-        'https://api.github.com/repos/$_repo/releases/latest',
-        options: Options(headers: {'Accept': 'application/vnd.github+json'}),
+      final res = await dio.get<dynamic>(
+        'https://github.com/$_repo/releases/latest',
+        options: Options(followRedirects: false, validateStatus: (_) => true),
       );
+      final location = res.headers.value('location') ?? '';
+      final m = RegExp(r'/releases/tag/([^/]+)$').firstMatch(location);
+      tag = m?.group(1);
     } on DioException catch (e) {
-      throw UpdateException(_networkMessage(e));
+      throw UpdateException(_networkMessage(e), kind: UpdateErrorKind.network);
     }
 
-    if (res.statusCode == 404) throw const UpdateException('仓库还没有发布过版本');
-    if (res.statusCode == 403 || res.statusCode == 429) {
-      throw const UpdateException('查询太频繁被 GitHub 限流了，过一会儿再试');
-    }
-    if (res.statusCode != 200) {
-      throw UpdateException('GitHub 返回 HTTP ${res.statusCode}');
+    if (tag == null || tag.isEmpty) {
+      throw const UpdateException('没有找到已发布的版本');
     }
 
-    final data = res.data;
-    if (data is! Map) throw const UpdateException('GitHub 返回格式不认识');
-
-    final tag = (data['tag_name'] as String?)?.trim() ?? '';
     final version = tag.startsWith('v') ? tag.substring(1) : tag;
-    if (version.isEmpty) throw const UpdateException('发布信息里没有版本号');
-
-    final notes = (data['body'] as String?)?.trim() ?? '';
-
-    // 资产文件名带版本号，只能从 assets 里挑，拼不出固定地址。
-    String? url;
-    String? name;
-    var size = 0;
-    for (final asset in (data['assets'] as List?) ?? const []) {
-      if (asset is! Map) continue;
-      final n = (asset['name'] as String?) ?? '';
-      if (n.startsWith('lightcone-gallery-android') && n.endsWith('.apk')) {
-        url = asset['browser_download_url'] as String?;
-        name = n;
-        size = (asset['size'] as num?)?.toInt() ?? 0;
-        break;
-      }
-    }
-
     _cachedAt = DateTime.now();
+
     final current = await appVersion();
-    if (url == null || name == null || !_isNewer(version, current.versionName)) {
+    if (!_isNewer(version, current.versionName)) {
       _cached = null;
       return null;
     }
 
+    final notes = await _fetchNotes(dio, tag);
+
     _cached = UpdateInfo(
       version: version,
       notes: notes,
-      downloadUrl: url,
-      fileName: name,
-      sizeBytes: size,
+      // latest/download 会跳到真正的最新资产，地址不用带版本号。
+      downloadUrl:
+          'https://github.com/$_repo/releases/latest/download/$_assetName',
+      fileName: _assetName,
+      sizeBytes: 0,
     );
     return _cached;
+  }
+
+  /// 更新说明只有 API 有。拿不到就算了 —— 限流不该连累版本检查。
+  static Future<String> _fetchNotes(Dio dio, String tag) async {
+    try {
+      final res = await dio.get<dynamic>(
+        'https://api.github.com/repos/$_repo/releases/tags/$tag',
+        options: Options(headers: {'Accept': 'application/vnd.github+json'}),
+      );
+      if (res.statusCode == 200 && res.data is Map) {
+        return ((res.data as Map)['body'] as String?)?.trim() ?? '';
+      }
+    } catch (_) {
+      // 说明拿不到不影响更新本身。
+    }
+    return '';
   }
 
   /// 下载 APK 到 cache 目录，返回本地路径。

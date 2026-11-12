@@ -30,6 +30,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   UpdateInfo? _info;
   double _progress = 0;
   String _error = '';
+  UpdateErrorKind _errorKind = UpdateErrorKind.other;
 
   @override
   void initState() {
@@ -57,6 +58,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
       if (!mounted) return;
       setState(() {
         _error = e.message;
+        _errorKind = e.kind;
         _phase = _Phase.error;
       });
     }
@@ -83,6 +85,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
         if (!mounted) return;
         setState(() {
           _phase = _Phase.error;
+          _errorKind = UpdateErrorKind.install;
           _error = '系统还没允许「光锥图库」安装应用。去设置里打开后再点一次。';
         });
         return;
@@ -95,6 +98,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
       if (!mounted) return;
       setState(() {
         _error = e.message;
+        _errorKind = e.kind;
         _phase = _Phase.error;
       });
     }
@@ -255,6 +259,16 @@ class _UpdateDialogState extends State<_UpdateDialog> {
         ];
 
       case _Phase.error:
+        // 只有「缺安装权限」才给「去授权」；限流、断网这类重试才有意义。
+        if (_errorKind != UpdateErrorKind.install) {
+          return [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('关闭'),
+            ),
+            FilledButton(onPressed: _check, child: const Text('重试')),
+          ];
+        }
         return [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),

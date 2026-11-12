@@ -16,7 +16,7 @@ class AppSettings extends ChangeNotifier {
   int _gridColumns = 0; // 0 = 自动（网格按 120dp 上限算列数）
   bool _blurR18 = true; // 网格里的 R-18 封面默认打码，点进详情正常看
   bool _autoMeta = true; // 启动时自动扫描并补全新作品的元数据
-  ThemePalette _palette = kThemePalettes.first;
+  late ThemePalette _palette = kThemePalettes.first;
 
   ThemeMode get themeMode => _themeMode;
 

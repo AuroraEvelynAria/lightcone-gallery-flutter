@@ -309,11 +309,7 @@ class _SearchScreenState extends State<SearchScreen> {
                     : 0,
               ),
             ];
-            Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => ViewerScreen(items: items, initialIndex: 0),
-              ),
-            );
+            Navigator.of(context).push(viewerRoute(items: items, initialIndex: 0));
           },
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),

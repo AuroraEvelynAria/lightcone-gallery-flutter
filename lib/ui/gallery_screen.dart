@@ -124,11 +124,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
                   : 0,
             ))
         .toList(growable: false);
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ViewerScreen(items: items, initialIndex: index),
-      ),
-    );
+    Navigator.of(context).push(viewerRoute(items: items, initialIndex: index));
   }
 
   String _titleOf(ImageRow row) {

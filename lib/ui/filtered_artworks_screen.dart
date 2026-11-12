@@ -7,6 +7,7 @@ import '../state/app_settings.dart';
 import '../state/app_state.dart';
 import 'artwork_card.dart';
 import 'artwork_detail_screen.dart';
+import 'desktop/artwork_menu.dart';
 
 /// 画师 / 标签筛选后的作品页（复用作品库的瀑布流）。
 class FilteredArtworksScreen extends StatefulWidget {
@@ -162,6 +163,15 @@ class _FilteredArtworksScreenState extends State<FilteredArtworksScreen> {
                 heroTag: 'art-${row.id}',
                 onTap: () => _openDetail(row),
                 onFavorite: () => _toggleFavorite(row),
+                onContextMenu: (position) => showArtworkContextMenu(
+                  context: context,
+                  globalPosition: position,
+                  pid: row.pid,
+                  favorite: row.favorite,
+                  primaryPath: row.originalPath,
+                  onOpen: () => _openDetail(row),
+                  onToggleFavorite: () => _toggleFavorite(row),
+                ),
               );
             },
           );

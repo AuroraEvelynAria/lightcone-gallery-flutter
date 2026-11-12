@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 import '../data/models.dart';
@@ -7,9 +10,15 @@ import '../state/app_settings.dart';
 import '../state/app_state.dart';
 import 'artwork_card.dart';
 import 'artwork_detail_screen.dart';
+import 'desktop/artwork_menu.dart';
 
 /// 作品库：瀑布流（每格高度 = 列宽 × 原图高宽比）。缩略图仍走系统缩略图，
 /// 比例来自 MediaStore 的 WIDTH/HEIGHT，所以布局不跳、滚动不卡。
+///
+/// 多选有两套语义：
+/// - **手机**：长按进入选择、再点切换勾选（触屏没有修饰键）。
+/// - **桌面**：`Ctrl`（或 `⌘`）点选、`Shift` 连选、`Ctrl+A` 全选、
+///   `Delete` 移出、`Esc` 退出；选区非空时右键给批量项。
 class ArtworksScreen extends StatefulWidget {
   const ArtworksScreen({super.key, required this.state});
 
@@ -29,7 +38,17 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
   bool _favoriteOnly = false;
   bool _selecting = false;
   final _selected = <int>{};
+
+  /// Shift 连选的锚点（列表下标）。进入选择或普通点选时更新。
+  int? _anchor;
+
+  /// 选择模式下接管 Ctrl+A / Delete / Esc 的焦点节点。
+  final _selectFocus = FocusNode();
+
   int _lastVersion = 0;
+
+  /// 桌面多选只在 Windows 生效；手机仍走长按那套（修饰键根本不存在）。
+  bool get _desktop => Platform.isWindows;
 
   @override
   void initState() {
@@ -44,6 +63,7 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
   void dispose() {
     widget.state.removeListener(_onStateChanged);
     _controller.dispose();
+    _selectFocus.dispose();
     super.dispose();
   }
 
@@ -132,17 +152,20 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
     }
   }
 
-  /// 长按进入多选；再点卡片是勾选/取消，不打开详情。
+  /// 长按进入多选（手机）；桌面长按也保留这套，应急用。
   void _startSelect(ArtworkRow row) {
     setState(() {
       _selecting = true;
       _selected.add(row.id);
+      _anchor = _rows.indexWhere((r) => r.id == row.id);
     });
+    _selectFocus.requestFocus();
   }
 
   void _toggleSelect(ArtworkRow row) {
     setState(() {
       if (!_selected.remove(row.id)) _selected.add(row.id);
+      _anchor = _rows.indexWhere((r) => r.id == row.id);
       if (_selected.isEmpty) _selecting = false;
     });
   }
@@ -151,10 +174,79 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
     setState(() {
       _selecting = false;
       _selected.clear();
+      _anchor = null;
     });
   }
 
-  Future<void> _favoriteSelected() async {
+  /// 桌面单击：修饰键决定加选/连选/单选。
+  ///
+  /// - `Ctrl`（或 `⌘`）：把这一格加进/移出选区（不进选择态也生效，方便起点）。
+  /// - `Shift`：从锚点连选到这一格（已处于选择态时）。
+  /// - 无修饰键：选择模式下切换勾选；否则打开详情。
+  void _onTapWithModifiers(ArtworkRow row, ArtworkTapModifiers modifiers) {
+    final index = _rows.indexWhere((r) => r.id == row.id);
+    if (index < 0) return;
+    if (modifiers.ctrl) {
+      setState(() {
+        _selecting = true;
+        if (!_selected.remove(row.id)) _selected.add(row.id);
+        _anchor = index;
+      });
+      _selectFocus.requestFocus();
+      return;
+    }
+    if (modifiers.shift && _selecting && _anchor != null) {
+      final from = _anchor!;
+      final lo = from < index ? from : index;
+      final hi = from < index ? index : from;
+      setState(() {
+        for (var i = lo; i <= hi; i++) {
+          _selected.add(_rows[i].id);
+        }
+      });
+      return;
+    }
+    if (_selecting) {
+      _toggleSelect(row);
+      return;
+    }
+    _openDetail(index);
+  }
+
+  void _selectAll() {
+    setState(() {
+      _selecting = true;
+      _selected
+        ..clear()
+        ..addAll(_rows.map((r) => r.id));
+      _anchor = 0;
+    });
+  }
+
+  /// 桌面选区的按键：Ctrl+A 全选、Delete 移出、Esc 退出。
+  ///
+  /// 只在**确实处理了**才 consume，否则返回 ignored 让事件继续冒泡 ——
+  /// 不然空选区时按 Esc 会把桌面壳「清空搜索」的老行为吃掉。
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    final ctrl = HardwareKeyboard.instance.isControlPressed;
+    if (key == LogicalKeyboardKey.keyA && ctrl) {
+      _selectAll();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.delete && _selecting) {
+      _removeSelected();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape && _selecting) {
+      _exitSelect();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  Future<void> _favoriteSelected({bool keepSelection = false}) async {
     final pids = _rows
         .where((row) => _selected.contains(row.id))
         .map((row) => row.pid)
@@ -163,7 +255,12 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
     if (pids.isEmpty) return;
     await widget.state.repo.setPidsFavorite(pids, true);
     final count = _selected.length;
-    _exitSelect();
+    if (!keepSelection) {
+      _exitSelect();
+    } else {
+      // 右键批量收藏：留在选择态，方便接着移出。
+      setState(() {});
+    }
     widget.state.bumpData();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -196,9 +293,33 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
     widget.state.bumpData();
   }
 
+  /// 右键菜单「移出作品库」：单件，同样两段确认。
+  Future<void> _removeSingle(ArtworkRow row) async {
+    final remove = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('移出「${_titleOf(row)}」？'),
+        content: Text('PID ${row.pid} 会从作品库移除（原图不会被删除），重扫也不会收回。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('移除'),
+          ),
+        ],
+      ),
+    );
+    if (remove != true) return;
+    await widget.state.repo.removeArtworks([row.id]);
+    widget.state.bumpData();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Column(
+    final body = Column(
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -225,10 +346,27 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
         if (_selecting) _buildSelectionBar(context),
       ],
     );
+    if (!_desktop) return body;
+    // 桌面多选快捷键：Ctrl+A 全选、Delete 移出、Esc 退出。用 Focus.onKeyEvent
+    // 而不是 CallbackShortcuts，是为了「没处理就冒泡」——见 _onKey。
+    return Focus(
+      focusNode: _selectFocus,
+      onKeyEvent: _onKey,
+      child: Listener(
+        // 鼠标点进网格就抢焦点，保证 Ctrl+A / Delete 立刻可用（列表本身不聚焦）。
+        onPointerDown: (_) {
+          if (!_selectFocus.hasFocus) _selectFocus.requestFocus();
+        },
+        child: body,
+      ),
+    );
   }
 
   Widget _buildSelectionBar(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final labelStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+      color: scheme.onSurfaceVariant,
+    );
     return Material(
       elevation: 8,
       color: scheme.surfaceContainerHigh,
@@ -244,6 +382,10 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
                 onPressed: _exitSelect,
               ),
               Text('已选 ${_selected.length}'),
+              const SizedBox(width: 8),
+              // 桌面给一眼能看懂的快捷键提示（手机没有键盘，不显示）
+              if (_desktop)
+                Text('Ctrl+A 全选 · 右键操作 · Esc 退出', style: labelStyle),
               const Spacer(),
               TextButton.icon(
                 onPressed: _favoriteSelected,
@@ -302,6 +444,9 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
           itemBuilder: (context, index) {
             final row = _rows[index];
             final selected = _selected.contains(row.id);
+            // 选中多件时右键给批量项（落在选区内也作用于整个选区）。
+            final inSelection = _selecting && selected;
+            final batchCount = inSelection ? _selected.length : 0;
             return ArtworkCard(
               image: cardImageProvider(
                 mediaId: row.mediaId,
@@ -326,6 +471,10 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
                   _openDetail(index);
                 }
               },
+              // 桌面：修饰键决定加选 / 连选 / 单选；手机不传，走上面的 onTap。
+              onTapModified: _desktop
+                  ? (modifiers) => _onTapWithModifiers(row, modifiers)
+                  : null,
               onLongPress: () {
                 if (_selecting) {
                   _toggleSelect(row);
@@ -334,6 +483,19 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
                 }
               },
               onFavorite: () => _toggleFavorite(index),
+              onContextMenu: (position) => showArtworkContextMenu(
+                context: context,
+                globalPosition: position,
+                pid: row.pid,
+                favorite: row.favorite,
+                primaryPath: row.originalPath,
+                batchCount: batchCount,
+                onOpen: () => _openDetail(index),
+                onToggleFavorite: () => _toggleFavorite(index),
+                onRemove: () => _removeSingle(row),
+                onBatchFavorite: () => _favoriteSelected(keepSelection: true),
+                onBatchRemove: _removeSelected,
+              ),
             );
           },
         );

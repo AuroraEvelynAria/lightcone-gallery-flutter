@@ -12,6 +12,7 @@ import '../state/app_state.dart';
 import 'artist_avatar_view.dart';
 import 'artwork_card.dart';
 import 'artwork_detail_screen.dart';
+import 'desktop/artwork_menu.dart';
 import 'filtered_artworks_screen.dart';
 
 /// 画师页：头部是本地汇总（头像 / 名字 / 作品数 / 页数 / 收藏 / 占用 /
@@ -503,6 +504,15 @@ class _ArtistScreenState extends State<ArtistScreen> {
       heroTag: 'artist-${row.id}',
       onTap: () => _openDetail(row),
       onFavorite: () => _toggleFavorite(row),
+      onContextMenu: (position) => showArtworkContextMenu(
+        context: context,
+        globalPosition: position,
+        pid: row.pid,
+        favorite: row.favorite,
+        primaryPath: row.originalPath,
+        onOpen: () => _openDetail(row),
+        onToggleFavorite: () => _toggleFavorite(row),
+      ),
     );
   }
 }

@@ -1,16 +1,21 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../state/app_state.dart';
 import 'artworks_screen.dart';
 import 'browse_screen.dart';
+import 'desktop/desktop_shell.dart';
 import 'gallery_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
 
-/// 主壳：底部四 tab + 顶栏「扫描 / 设置」。
+/// 主壳分派：Windows 走桌面壳（[DesktopShell]，左侧栏 + 工具栏），
+/// 其余（Android 竖屏 / 横屏）走下面的手机壳。
 ///
-/// 用 IndexedStack 而不是重建页面：切 tab 是零成本、保留滚动位置与已加载
-/// 数据。四个页面启动时各拉一页，总耗时 < 100ms。
+/// 分派按平台而不是按宽度：桌面窗口窄到 960 还是鼠标键盘的用法（右键菜单、
+/// Ctrl+F），不该退回「底部 tab + 下滑手势」那套触屏骨架；Android 横屏固然
+/// 宽，但操作仍是手指，底部/侧边导航才对。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key, required this.state});
 
@@ -21,6 +26,27 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
+  @override
+  Widget build(BuildContext context) {
+    if (Platform.isWindows) return DesktopShell(state: widget.state);
+    return MobileShell(state: widget.state);
+  }
+}
+
+/// 手机壳：底部四 tab + 顶栏「扫描 / 设置」（Android 竖屏；横屏换左侧 Rail）。
+///
+/// 用 IndexedStack 而不是重建页面：切 tab 是零成本、保留滚动位置与已加载
+/// 数据。四个页面启动时各拉一页，总耗时 < 100ms。
+class MobileShell extends StatefulWidget {
+  const MobileShell({super.key, required this.state});
+
+  final AppState state;
+
+  @override
+  State<MobileShell> createState() => _MobileShellState();
+}
+
+class _MobileShellState extends State<MobileShell> {
   int _index = 0;
 
   @override

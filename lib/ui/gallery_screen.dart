@@ -7,6 +7,7 @@ import '../state/app_settings.dart';
 import '../state/app_state.dart';
 import 'artwork_card.dart';
 import 'artwork_detail_screen.dart';
+import 'desktop/artwork_menu.dart';
 import 'viewer_screen.dart';
 
 /// 通用图库：pixez 式作品卡瀑布流 + 分页（预览 / 标题 / 画师 / 收藏心）。
@@ -233,6 +234,15 @@ class _GalleryScreenState extends State<GalleryScreen> {
                       onTap: () => _openItem(index),
                       onLongPress: () => _toggleFavorite(index),
                       onFavorite: () => _toggleFavorite(index),
+                      onContextMenu: (position) => showArtworkContextMenu(
+                        context: context,
+                        globalPosition: position,
+                        pid: row.pid,
+                        favorite: row.isFavorite,
+                        primaryPath: row.path,
+                        onOpen: () => _openItem(index),
+                        onToggleFavorite: () => _toggleFavorite(index),
+                      ),
                     );
                   },
                 ),

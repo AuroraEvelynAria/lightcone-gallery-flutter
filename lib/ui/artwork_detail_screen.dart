@@ -262,19 +262,26 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final detail = _detail;
+    // 桌面用普通不透明顶栏：沉浸式（图片顶到状态栏、图标浮在图上）是手机
+    // 竖屏的做法，桌面没有状态栏要避让，标题也该常驻在顶栏上。
+    final desktop = Platform.isWindows;
     return Scaffold(
-      // 沉浸式：图片顶到状态栏，返回/菜单浮在图上（pixez 的做法）
-      extendBodyBehindAppBar: true,
+      extendBodyBehindAppBar: !desktop,
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        backgroundColor: desktop ? null : Colors.transparent,
         elevation: 0,
-        scrolledUnderElevation: 0,
-        foregroundColor: Colors.white,
-        systemOverlayStyle: SystemUiOverlayStyle.light,
-        // pixez 的详情顶栏只有图标浮在图上，没有标题和整条黑罩 —— 图优先
-        flexibleSpace: const _TopScrim(),
-        // 标题/画师在图片下方的信息区，顶栏不占视觉
-        title: null,
+        scrolledUnderElevation: desktop ? null : 0,
+        foregroundColor: desktop ? null : Colors.white,
+        systemOverlayStyle: desktop ? null : SystemUiOverlayStyle.light,
+        // pixez 的详情顶栏只有图标浮在图上；桌面把标题放回顶栏
+        flexibleSpace: desktop ? null : const _TopScrim(),
+        title: desktop
+            ? Text(
+                detail == null ? '作品详情' : detail.displayTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              )
+            : null,
         actions: [
           if (detail != null && detail.pages.isNotEmpty) ...[
             if (!Platform.isWindows)
@@ -373,12 +380,14 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
                 SizedBox(
                   width: 380,
                   child: SingleChildScrollView(
-                    // 详情是沉浸式顶栏：右侧信息别钻到 AppBar 下面。
+                    // 手机是沉浸式顶栏，右侧信息别钻到 AppBar 下面；
+                    // 桌面顶栏不透明、内容本来就在其下，无需让位。
                     padding: EdgeInsets.only(
-                      top:
-                          MediaQuery.paddingOf(context).top +
-                          kToolbarHeight +
-                          8,
+                      top: Platform.isWindows
+                          ? 12
+                          : MediaQuery.paddingOf(context).top +
+                                kToolbarHeight +
+                                8,
                     ),
                     child: _buildInfo(detail),
                   ),
@@ -465,8 +474,11 @@ class _ArtworkDetailScreenState extends State<ArtworkDetailScreen> {
   Widget _buildStrip(ArtworkDetail detail, {double? width}) {
     final media = MediaQuery.of(context);
     final pageWidth = width ?? media.size.width;
-    // 状态栏 + 工具栏 + 8dp 呼吸位：横图第一页从这下面开始
-    final appBarBottom = media.padding.top + kToolbarHeight + 8;
+    // 状态栏 + 工具栏 + 8dp 呼吸位：横图第一页从这下面开始（手机沉浸式顶栏
+    // 才需要让位；桌面顶栏不透明、正文已在其下，让位为 0）。
+    final appBarBottom = Platform.isWindows
+        ? 0.0
+        : media.padding.top + kToolbarHeight + 8;
     return SliverList.separated(
       itemCount: detail.pages.length,
       separatorBuilder: (_, _) => const SizedBox(height: _stripGap),

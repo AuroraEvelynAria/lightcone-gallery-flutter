@@ -10,22 +10,42 @@ import '../state/app_state.dart';
 import 'artwork_card.dart';
 import 'artwork_detail_screen.dart';
 import 'blur_thumb.dart';
+import 'desktop/artwork_menu.dart';
 import 'page_badge.dart';
 import 'viewer_screen.dart';
 
 /// 全局检索：作品按 PID / 标题 / 画师 / 标签，图片按文件名。
 /// 输入防抖 300ms —— 跟手又不打爆 SQL。
+///
+/// 控制器可以外部注入（[controller]）：桌面壳把搜索框收进顶部工具栏后，
+/// 工具栏与这里共用同一个 [TextEditingController]，两处输入永远同步。
+/// 不传就自己建一个（手机端的用法，行为不变）。[showInlineSearch] 为 false
+/// 时不再渲染页内那条搜索框（桌面已经有工具栏的了）。
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key, required this.state});
+  const SearchScreen({
+    super.key,
+    required this.state,
+    this.controller,
+    this.focusNode,
+    this.showInlineSearch = true,
+  });
 
   final AppState state;
+
+  /// 外部共享的搜索控制器；null = 本页自建。
+  final TextEditingController? controller;
+  final FocusNode? focusNode;
+
+  /// 是否渲染页内的搜索输入框。
+  final bool showInlineSearch;
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  final _controller = TextEditingController();
+  late final TextEditingController _controller =
+      widget.controller ?? TextEditingController();
   Timer? _debounce;
   String _query = '';
   List<ArtworkRow> _artworks = const [];
@@ -34,13 +54,26 @@ class _SearchScreenState extends State<SearchScreen> {
   int _tab = 0;
 
   @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onChanged);
+    // 外部控制器可能带进已有的文字（切到搜索 tab 前先在工具栏打过字）
+    if (_controller.text.trim().isNotEmpty) {
+      _search(_controller.text.trim());
+    }
+  }
+
+  @override
   void dispose() {
     _debounce?.cancel();
-    _controller.dispose();
+    _controller.removeListener(_onChanged);
+    // 只清自己建的；外部注入的由外部负责释放。
+    if (widget.controller == null) _controller.dispose();
     super.dispose();
   }
 
-  void _onChanged(String value) {
+  void _onChanged() {
+    final value = _controller.text;
     _debounce?.cancel();
     if (value.trim().isEmpty) {
       setState(() {
@@ -75,29 +108,29 @@ class _SearchScreenState extends State<SearchScreen> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-          child: TextField(
-            controller: _controller,
-            onChanged: _onChanged,
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              hintText: 'PID / 标题 / 画师 / 标签 / 文件名',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: _controller.text.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () {
-                        _controller.clear();
-                        _onChanged('');
-                      },
-                    ),
-              isDense: true,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        if (widget.showInlineSearch)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: TextField(
+              controller: _controller,
+              focusNode: widget.focusNode,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: 'PID / 标题 / 画师 / 标签 / 文件名',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _controller.text.isEmpty
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _controller.clear();
+                        },
+                      ),
+                isDense: true,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
             ),
           ),
-        ),
         // 双 chip 切换结果域（不用 TabBar：它要求 TabController，这里状态自己管）
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 4),
@@ -219,6 +252,15 @@ class _SearchScreenState extends State<SearchScreen> {
               heroTag: 'search-${row.id}',
               onTap: () => _openArtwork(row),
               onFavorite: () => _toggleArtworkFavorite(row),
+              onContextMenu: (position) => showArtworkContextMenu(
+                context: context,
+                globalPosition: position,
+                pid: row.pid,
+                favorite: row.favorite,
+                primaryPath: row.originalPath,
+                onOpen: () => _openArtwork(row),
+                onToggleFavorite: () => _toggleArtworkFavorite(row),
+              ),
             );
           },
         );

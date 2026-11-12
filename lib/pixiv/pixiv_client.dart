@@ -33,7 +33,7 @@ class PixivClient {
     );
     final url = normalizeProxy(proxy) ?? '';
     if (url.isNotEmpty) {
-      final hostPort = _hostPort(url);
+      final hostPort = parseProxyHost(url);
       if (hostPort != null) {
         (dio.httpClientAdapter as IOHttpClientAdapter).createHttpClient = () {
           final client = HttpClient();
@@ -61,7 +61,7 @@ class PixivClient {
     return value;
   }
 
-  static (String, int)? _hostPort(String url) {
+  static (String, int)? parseProxyHost(String url) {
     final rest = url.replaceFirst('http://', '').replaceFirst('https://', '');
     final colon = rest.lastIndexOf(':');
     if (colon <= 0) return (rest, 80);
@@ -104,7 +104,7 @@ class PixivClient {
 
   /// 代理预检：只做 TCP 握手（2 秒），不发 HTTP —— 20 秒超时前就能判生死。
   static Future<String?> probeProxy(String url) async {
-    final hostPort = _hostPort(url);
+    final hostPort = parseProxyHost(url);
     if (hostPort == null) return '代理地址「$url」格式不对，请填 http://IP:端口';
     try {
       final socket = await Socket.connect(

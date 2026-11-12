@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <!-- 设为壁纸（普通权限，安装即授予） -->
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <!-- 应用内更新：下载完 APK 后要拉起系统安装器。
+         这只是「声明」，真正的开关是用户在每个应用上单独授权的
+         「安装未知应用」，见 UpdateChannel.canInstall()。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application
         android:label="光锥图库"
         android:name="${applicationName}"

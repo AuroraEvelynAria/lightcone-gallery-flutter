@@ -7,10 +7,14 @@ import io.flutter.embedding.engine.FlutterEngine
 class MainActivity : FlutterActivity() {
 
     private var mediaChannel: MediaStoreChannel? = null
+    private var updateChannel: UpdateChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         mediaChannel = MediaStoreChannel(this, flutterEngine.dartExecutor.binaryMessenger).also {
+            it.attach()
+        }
+        updateChannel = UpdateChannel(this, flutterEngine.dartExecutor.binaryMessenger).also {
             it.attach()
         }
     }

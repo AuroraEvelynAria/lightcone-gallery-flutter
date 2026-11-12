@@ -51,3 +51,17 @@ app.*.map.json
 *.apk
 *.aab
 /android/local.properties
+
+# 本机临时验证产物：截图（含图库私人图片）、录屏、抓帧脚本。
+.tmp-verify/
+
+# 上一棒做 A/B 对比用的 git worktree。它不是普通目录，
+# 误 "git add ." 会被当成 embedded repo，留下一个克隆下来为空的 gitlink。
+.ab-baseline/
+
+# 交接笔记（含真机序列号与本机路径）与临时性能入口，用完即弃。
+HANDOFF.md
+lib/main_profile.dart
+
+# 真机迁移/校验时临时拉下来的数据库备份（含完整图库索引与路径）。
+.db-backup/

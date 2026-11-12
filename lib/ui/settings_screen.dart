@@ -11,6 +11,8 @@ import 'brand.dart';
 import 'directory_picker.dart';
 import 'meta_sheet.dart';
 import 'palettes.dart';
+import 'update_dialog.dart';
+import '../update/update_service.dart';
 
 /// 设置页：外观（主题 / 网格密度）、数据（统计 / 扫描 / 导入 / 补全）、
 /// 网络（代理）、关于。
@@ -31,6 +33,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // 多一个插件不划算）
   static const _version = '1.1.0+2';
 
+  /// 安装包的真实版本（原生读 PackageManager）。读不到时回退到 [_version] ——
+  /// 那个常量只保证「没通道时不空白」，别指望它和 pubspec 永远同步。
+  String _appVersion = '';
+
   GalleryStats? _stats;
   int? _pending;
   String _dbDir = '';
@@ -49,17 +55,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  /// Windows 端没有更新通道（自动更新只做 Android），返回空串。
+  Future<String> _readAppVersion() async {
+    if (!Platform.isAndroid) return '';
+    try {
+      final v = await UpdateService.appVersion();
+      return v.versionName;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  Future<void> _checkUpdate() async {
+    final proxy = await widget.state.repo.setting('pixiv_proxy');
+    if (!mounted) return;
+    await showUpdateDialog(context, proxy: proxy);
+  }
+
   Future<void> _load() async {
     final repo = widget.state.repo;
     final stats = await repo.stats();
     final pending = await repo.pendingMetaCount();
     final proxy = await repo.setting('pixiv_proxy') ?? '';
     final dbDir = await LightConeDb.databasePath();
+    final appVersion = await _readAppVersion();
     if (!mounted) return;
     setState(() {
       _stats = stats;
       _pending = pending;
       _dbDir = dbDir;
+      _appVersion = appVersion;
       // 正在输入时不要覆盖用户的光标
       if (!_proxyController.selection.isValid ||
           _proxyController.text.isEmpty) {
@@ -370,11 +395,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     title: const Text('光锥图库 · Flutter 版'),
                     subtitle: Text(
-                      '版本 $_version · 索引 schema v12\n'
+                      '版本 ${_appVersion.isEmpty ? _version : _appVersion} · 索引 schema v12\n'
                       '与桌面端共用同一套表结构',
                     ),
                     isThreeLine: true,
                   ),
+                  if (Platform.isAndroid)
+                    ListTile(
+                      leading: const Icon(Icons.system_update_alt),
+                      title: const Text('检查更新'),
+                      subtitle: Text(
+                        _appVersion.isEmpty
+                            ? '从 GitHub Releases 获取最新版'
+                            : '当前版本 $_appVersion',
+                      ),
+                      onTap: _checkUpdate,
+                    ),
                   _InfoBlock(
                     icon: Icons.storage_outlined,
                     title: '数据库',

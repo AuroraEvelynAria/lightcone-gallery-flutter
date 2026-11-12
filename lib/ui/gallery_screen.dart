@@ -30,6 +30,12 @@ class _GalleryScreenState extends State<GalleryScreen> {
   bool _hasMore = true;
   bool _favoriteOnly = false;
   bool _descending = true;
+
+  /// AI 三态：null 不限 / true 仅 AI / false 仅非 AI。
+  bool? _aiOnly;
+  bool _hideR18 = false;
+  String? _artistUid;
+  String? _artistName;
   int _lastVersion = 0;
 
   @override
@@ -62,6 +68,47 @@ class _GalleryScreenState extends State<GalleryScreen> {
     if (_controller.position.extentAfter < 800) _loadMore();
   }
 
+  /// 选画师：按作品数降序列出，量大的人排前面。
+  Future<void> _pickArtist() async {
+    final artists = await widget.state.repo.artistCounts(limit: 300);
+    if (!mounted) return;
+    if (artists.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('还没有识别到画师，先扫描或补全元数据')),
+      );
+      return;
+    }
+    final picked = await showModalBottomSheet<ArtistCount>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView.builder(
+          itemCount: artists.length,
+          itemBuilder: (context, i) {
+            final a = artists[i];
+            return ListTile(
+              dense: true,
+              title: Text(
+                a.name.isEmpty ? a.uid : a.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(a.uid),
+              trailing: Text(a.count.toString()),
+              onTap: () => Navigator.of(context).pop(a),
+            );
+          },
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _artistUid = picked.uid;
+      _artistName = picked.name.isEmpty ? picked.uid : picked.name;
+    });
+    _reload();
+  }
+
   Future<void> _reload() async {
     if (!mounted) return;
     setState(() {
@@ -77,6 +124,9 @@ class _GalleryScreenState extends State<GalleryScreen> {
     _loading = true;
     final page = await widget.state.repo.imagesPage(
       favoriteOnly: _favoriteOnly,
+      aiOnly: _aiOnly,
+      xRestrict: _hideR18 ? 0 : -1,
+      artistUid: _artistUid,
       descending: _descending,
       offset: _rows.length,
       limit: _pageSize,
@@ -174,29 +224,85 @@ class _GalleryScreenState extends State<GalleryScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           child: Row(
             children: [
-              FilterChip(
-                label: const Text('收藏'),
-                selected: _favoriteOnly,
-                onSelected: (value) {
-                  _favoriteOnly = value;
-                  _reload();
-                },
-              ),
-              const SizedBox(width: 8),
-              FilterChip(
-                label: Text(_descending ? '最新' : '最早'),
-                selected: _descending,
-                onSelected: (value) {
-                  _descending = value;
-                  _reload();
-                },
-              ),
-              const Spacer(),
-              if (_rows.isNotEmpty)
-                Text(
-                  '${_rows.length}${_hasMore ? '+' : ''}',
-                  style: Theme.of(context).textTheme.labelSmall,
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      FilterChip(
+                        label: const Text('收藏'),
+                        selected: _favoriteOnly,
+                        onSelected: (value) {
+                          setState(() => _favoriteOnly = value);
+                          _reload();
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      FilterChip(
+                        label: Text(_descending ? '最新' : '最早'),
+                        selected: _descending,
+                        onSelected: (value) {
+                          setState(() => _descending = value);
+                          _reload();
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      // 三个筛选维度按「能砍掉多少」排序排的：
+                      // 画师（本地库 99.5% 有画师）、AI（约六成）、R-18。
+                      FilterChip(
+                        label: Text(
+                          _aiOnly == null
+                              ? 'AI'
+                              : (_aiOnly! ? '仅 AI' : '非 AI'),
+                        ),
+                        selected: _aiOnly != null,
+                        onSelected: (_) {
+                          setState(() {
+                            _aiOnly = _aiOnly == null
+                                ? true
+                                : (_aiOnly! ? false : null);
+                          });
+                          _reload();
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      FilterChip(
+                        label: const Text('隐藏 R-18'),
+                        selected: _hideR18,
+                        onSelected: (value) {
+                          setState(() => _hideR18 = value);
+                          _reload();
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      if (_artistUid == null)
+                        ActionChip(
+                          avatar: const Icon(Icons.person_outline, size: 18),
+                          label: const Text('画师'),
+                          onPressed: _pickArtist,
+                        )
+                      else
+                        InputChip(
+                          avatar: const Icon(Icons.person, size: 18),
+                          label: Text(
+                            _artistName ?? '画师',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          onDeleted: () {
+                            setState(() {
+                              _artistUid = null;
+                              _artistName = null;
+                            });
+                            _reload();
+                          },
+                        ),
+                    ],
+                  ),
                 ),
+              ),
+              // 这里原来有个「已加载 N 张」的计数，把「画师」chip 挤出了屏幕。
+              // 计数信息量低（滚动时自己就能感知位置），让位给筛选项。
             ],
           ),
         ),

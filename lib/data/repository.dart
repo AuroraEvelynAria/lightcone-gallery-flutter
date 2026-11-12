@@ -365,10 +365,20 @@ class Repository {
   ///
   /// 注意 WHERE 只在有条件时才拼 —— 空条件拼出 `WHERE  ORDER BY` 是 Kotlin 版
   /// 真机上撞过的 SQL 语法错误，这里同一处坑不再踩。
+  /// 图库分页（按 PID 归组：一个作品一张卡）。
+  ///
+  /// [artistUid] / [aiOnly] / [xRestrict] 是「图太多翻不动」的解药：
+  /// 本地库里 99.5% 的图有画师，单是最大的几个画师就占四成，按画师收窄
+  /// 比按时间往后翻快得多。
+  ///
+  /// [aiOnly] 传 null 表示不限，true 只看 AI，false 只看非 AI。
   Future<List<ImageRow>> imagesPage({
     int? libraryId,
+    String? artistUid,
     bool favoriteOnly = false,
     int minRating = 0,
+    bool? aiOnly,
+    int xRestrict = -1,
     bool descending = true,
     required int offset,
     required int limit,
@@ -379,11 +389,30 @@ class Repository {
       clauses.add('i.library_id = ?');
       args.add(libraryId);
     }
+    if (artistUid != null) {
+      clauses.add('i.artist_uid = ?');
+      args.add(artistUid);
+    }
     // 收藏是整组的状态：任意一页收藏过，封面就带心
     if (favoriteOnly) clauses.add('g.fav = 1');
     if (minRating > 0) {
       clauses.add('i.rating >= ?');
       args.add(minRating);
+    }
+    if (aiOnly != null) {
+      // 判定口径与作品库 artworksPage 一致：AI 标签命中，或 illust_ai 明确标了。
+      // 反选用 NOT —— 本地图没有 pid，自然落进「非 AI」，符合直觉。
+      final placeholders = List.filled(kAiTags.length, '?').join(',');
+      final aiExpr =
+          '(EXISTS (SELECT 1 FROM illust_tags it WHERE it.pid = i.pid '
+          'AND lower(trim(it.tag)) IN ($placeholders)) '
+          'OR EXISTS (SELECT 1 FROM illust_ai ia WHERE ia.pid = i.pid AND ia.ai_type = 2))';
+      clauses.add(aiOnly ? aiExpr : 'NOT $aiExpr');
+      args.addAll(kAiTags);
+    }
+    if (xRestrict >= 0) {
+      clauses.add('COALESCE(meta.x_restrict, 0) = ?');
+      args.add(xRestrict);
     }
     final where = clauses.isEmpty ? '' : 'WHERE ${clauses.join(' AND ')} ';
     final order = descending ? 'DESC' : 'ASC';

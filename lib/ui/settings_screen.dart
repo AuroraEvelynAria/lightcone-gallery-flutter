@@ -294,7 +294,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ListTile(
                     leading: const Icon(Icons.file_upload_outlined),
                     title: const Text('导入索引备份'),
-                    subtitle: const Text('整库替换，需重新扫描'),
+                    subtitle: const Text(
+                      '整库替换；.lcbak 含画师头像，旧 .db 不含',
+                    ),
                     enabled: !_busy,
                     onTap: () async {
                       final ok = await _confirm(
@@ -315,8 +317,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   ListTile(
                     leading: const Icon(Icons.file_download_outlined),
-                    title: const Text('导出备份'),
-                    subtitle: const Text('生成 .db，桌面端「导入备份」可直接用'),
+                    title: const Text('导出完整备份'),
+                    subtitle: const Text(
+                      '索引数据库 + 画师头像，换机后不用重新下载头像',
+                    ),
                     enabled: !_busy,
                     onTap: () => _run(widget.state.exportBackup),
                   ),

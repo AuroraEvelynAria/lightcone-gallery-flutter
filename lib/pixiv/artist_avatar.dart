@@ -117,7 +117,8 @@ class ArtistAvatarStore {
 
   static bool _validUid(String uid) => RegExp(r'^\d+$').hasMatch(uid);
 
-  static Future<Directory> _cacheDir() async {
+  /// 头像缓存目录。备份打包 / 导入还原都要用到，所以是公开的。
+  static Future<Directory> cacheDirectory() async {
     final cached = _dir;
     if (cached != null) return cached;
     final base = await getApplicationSupportDirectory();
@@ -174,7 +175,7 @@ class ArtistAvatarStore {
   /// 已有头像文件的直接拿来用（不判断新旧）；没有返回 null。
   static Future<File?> cached(String uid) async {
     if (!_validUid(uid)) return null;
-    final dir = await _cacheDir();
+    final dir = await cacheDirectory();
     final file = _imageFile(dir, uid);
     if (!await file.exists()) return null;
     final stat = await file.stat();
@@ -184,7 +185,7 @@ class ArtistAvatarStore {
   /// 缓存目录里已经处理过的 uid：`.img`（有头像）与 `.none`（确认没有）。
   /// [anyAge] = true 时忽略 30 天 TTL —— 批量补全要的是「有就跳过」。
   static Future<Set<String>> _existingUids({required bool anyAge}) async {
-    final dir = await _cacheDir();
+    final dir = await cacheDirectory();
     final now = DateTime.now();
     final found = <String>{};
     await for (final entity in dir.list()) {
@@ -297,7 +298,7 @@ class ArtistAvatarStore {
 
   static Future<bool> _hasNoneMarker(String uid) async {
     if (!_validUid(uid)) return false;
-    final dir = await _cacheDir();
+    final dir = await cacheDirectory();
     return _hasFreshNone(_noneMarker(dir, uid));
   }
 
@@ -325,7 +326,7 @@ class ArtistAvatarStore {
     String uid, {
     required bool batch,
   }) async {
-    final dir = await _cacheDir();
+    final dir = await cacheDirectory();
     final file = _imageFile(dir, uid);
     final marker = _noneMarker(dir, uid);
     final exists = await file.exists();

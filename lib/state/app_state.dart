@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'package:path/path.dart' as p;
+
+import '../data/backup_bundle.dart';
 import '../data/db.dart';
 import '../data/repository.dart';
 import '../media/media_channel.dart';
@@ -73,22 +76,50 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// 导入桌面备份：SAF 选文件 → 校验 → 换库 → 重开。
+  /// 导入备份：SAF 选文件 → 校验 → 换库 → 还原画师头像。
+  ///
+  /// 同时认两种格式：新的 `.lcbak`（zip，含头像）和旧的裸 `.db`
+  /// （桌面端导出的、以及本应用 1.2.2 之前导的，都不含头像）。
   Future<String> importBackup() async {
     final path = await MediaChannel.pickBackup();
     if (path == null) return '已取消';
+    Directory? tempDir;
     try {
+      final picked = File(path);
+
+      if (await BackupBundle.looksLikeZip(picked)) {
+        final unpacked = await BackupBundle.unpack(picked);
+        tempDir = unpacked.tempDir;
+
+        final error = await LightConeDb.validateBackup(unpacked.dbFile.path);
+        if (error != null) return error;
+
+        final newDb = await LightConeDb.replaceWith(unpacked.dbFile.path);
+        repo = Repository(newDb);
+        final restored = await BackupBundle.restoreAvatars(
+          Directory(p.join(unpacked.tempDir.path, 'artist_avatars')),
+        );
+        bumpData();
+        return unpacked.avatarCount == 0
+            ? '导入完成（这个包里没有画师头像）'
+            : '导入完成（恢复画师头像 $restored 个）';
+      }
+
+      // 旧的裸 .db
       final error = await LightConeDb.validateBackup(path);
       if (error != null) return error;
       final newDb = await LightConeDb.replaceWith(path);
       repo = Repository(newDb);
       bumpData();
-      return '导入完成';
+      return '导入完成（旧格式备份，不含画师头像）';
     } catch (e) {
       return '导入失败：$e';
     } finally {
       try {
         await File(path).delete();
+      } catch (_) {}
+      try {
+        await tempDir?.delete(recursive: true);
       } catch (_) {}
     }
   }
@@ -112,31 +143,33 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// 导出备份：WAL 并回主库 → 拷一份临时副本 → 系统文件选择器选保存位置。
+  /// 导出完整备份：WAL 并回主库 → 打包（数据库 + 画师头像）→ 选保存位置。
+  ///
+  /// 产出的 `.lcbak` 是个 zip。之所以不再直接给裸 .db：画师头像存在
+  /// `artist_avatars/` 目录里（不在 artists 表），不一起打包的话换机 / 重装
+  /// 后头像全没，得联网重下一千多张。
   ///
   /// 不用 `VACUUM INTO`：Android 8 的 SQLite 才 3.19，没有那条语法（3.27 才有）。
   Future<String> exportBackup() async {
     final stamp = DateTime.now();
-    final temp = File(
-      '${Directory.systemTemp.path}/export-${stamp.millisecondsSinceEpoch}.db',
-    );
+    final date =
+        '${stamp.year}'
+        '${stamp.month.toString().padLeft(2, '0')}'
+        '${stamp.day.toString().padLeft(2, '0')}';
+    BackupPack? packed;
     try {
       await repo.db.execute('PRAGMA wal_checkpoint(FULL)');
-      await File(repo.db.path).copy(temp.path);
-      final date =
-          '${stamp.year}'
-          '${stamp.month.toString().padLeft(2, '0')}'
-          '${stamp.day.toString().padLeft(2, '0')}';
+      packed = await BackupBundle.pack(repo.db.path);
       final saved = await MediaChannel.exportBackup(
-        temp.path,
-        'lightcone-$date.db',
+        packed.file.path,
+        'lightcone-$date.${BackupBundle.extension}',
       );
-      return saved == null ? '已取消导出' : '已导出（$saved）';
+      return saved == null ? '已取消导出' : '已导出（${packed.summary}）';
     } catch (e) {
       return '导出失败：$e';
     } finally {
       try {
-        await temp.delete();
+        await packed?.file.delete();
       } catch (_) {}
     }
   }

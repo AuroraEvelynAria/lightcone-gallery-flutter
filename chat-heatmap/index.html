@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>聊天热力图</title>
+<style>
+:root {
+  --bg: #f6f8f5;
+  --card: #ffffff;
+  --ink: #161a17;
+  --muted: #6f7a72;
+  --line: #e3e8e2;
+  --me: #07c160;
+  --other: #a9c9b6;
+  --accent-ink: #0a7a44;
+  --l0: #edf0eb;
+  --l1: #d3ecd9;
+  --l2: #9fdcb8;
+  --l3: #4cc287;
+  --l4: #0e8a4d;
+  --radius: 20px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1211;
+    --card: #171b19;
+    --ink: #eef2ef;
+    --muted: #93a09a;
+    --line: #262c29;
+    --me: #22c55e;
+    --other: #5b7a68;
+    --accent-ink: #7ce3ac;
+    --l0: #222825;
+    --l1: #1d4230;
+    --l2: #286b48;
+    --l3: #3ea570;
+    --l4: #7ce3ac;
+    color-scheme: dark;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "PingFang SC", "SF Pro Text", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+.page {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 56px 24px 72px;
+}
+.eyebrow {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: .22em;
+  font-weight: 500;
+}
+h1 {
+  margin: 0;
+  font-size: clamp(29px, 4.6vw, 48px);
+  line-height: 1.18;
+  letter-spacing: -.035em;
+  font-weight: 600;
+}
+h1 .num { color: var(--accent-ink); font-variant-numeric: tabular-nums; }
+.sub {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 22px;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color .18s ease, transform .18s ease, background .18s ease;
+  user-select: none;
+}
+.btn:hover { border-color: var(--muted); transform: translateY(-1px); }
+.btn:active { transform: none; }
+.btn.solid { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.btn.solid:hover { background: var(--accent-ink); border-color: var(--accent-ink); color: #fff; }
+.btn.ghost { background: transparent; }
+@media (prefers-color-scheme: dark) {
+  .btn.solid:hover { color: #0b1510; }
+}
+.select {
+  height: 40px;
+  max-width: 260px;
+  padding: 0 34px 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 18px, calc(100% - 13px) 18px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.drop {
+  margin-top: 30px;
+  padding: 54px 24px;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .2s ease, background .2s ease;
+}
+.drop:hover, .drop.over { border-color: var(--me); background: color-mix(in srgb, var(--me) 5%, var(--card)); }
+.drop svg { width: 34px; height: 34px; color: var(--muted); }
+.drop-title { margin: 14px 0 4px; font-size: 17px; font-weight: 500; }
+.drop-sub { margin: 0; color: var(--muted); font-size: 13px; }
+.drop-error { margin: 14px 0 0; color: #d24a3c; font-size: 13px; }
+.dashboard { margin-top: 30px; }
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  overflow: hidden;
+}
+.kpi { padding: 20px 18px; border-right: 1px solid var(--line); }
+.kpi:last-child { border-right: 0; }
+.k-label { margin: 0; color: var(--muted); font-size: 12px; }
+.k-value {
+  margin: 6px 0 0;
+  font-size: 23px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.k-value.sm { font-size: 18px; }
+.k-note { margin: 4px 0 0; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card {
+  margin-top: 16px;
+  padding: 22px 24px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.card-head h2 { margin: 0; font-size: 15px; font-weight: 500; letter-spacing: -.01em; }
+.hint { color: var(--muted); font-size: 12px; text-align: right; }
+.cal-wrap, .hour-wrap { position: relative; overflow-x: auto; }
+svg.chart { display: block; width: 100%; height: auto; min-width: 600px; }
+.cal-m { fill: var(--muted); font-size: 10px; font-family: inherit; }
+.cal-w { fill: var(--muted); font-size: 10px; font-family: inherit; }
+.cell { shape-rendering: geometricPrecision; transition: opacity .12s ease; }
+.cell:hover { opacity: .72; }
+.peak { stroke: var(--ink); stroke-width: 1.4; }
+.lv0 { fill: var(--l0); }
+.lv1 { fill: var(--l1); }
+.lv2 { fill: var(--l2); }
+.lv3 { fill: var(--l3); }
+.lv4 { fill: var(--l4); }
+.legend { display: flex; align-items: center; gap: 4px; margin-top: 10px; color: var(--muted); font-size: 11px; }
+.legend .sw { width: 11px; height: 11px; border-radius: 2.5px; display: inline-block; }
+.legend .gap { width: 8px; }
+.months {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 190px;
+  padding-top: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.mcol { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
+.mbar { display: flex; flex-direction: column; justify-content: flex-end; width: 100%; border-radius: 3px 3px 0 0; overflow: hidden; transition: height .45s cubic-bezier(.22,.8,.3,1); }
+.seg { width: 100%; }
+.seg.me { background: var(--me); }
+.seg.other { background: var(--other); }
+.seg.all { background: var(--l2); }
+.mlabel { height: 18px; line-height: 18px; font-size: 10px; color: var(--muted); text-align: center; white-space: nowrap; overflow: visible; }
+.tip {
+  position: absolute;
+  z-index: 5;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #1b1f1c;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -118%);
+  transition: opacity .12s ease;
+}
+@media (prefers-color-scheme: dark) {
+  .tip { background: #f2f5f2; color: #141814; }
+}
+.tip.on { opacity: 1; }
+.lg { display: inline-flex; align-items: center; gap: 5px; margin-right: 12px; }
+.lg i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.meta summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.meta summary::marker { color: var(--line); }
+.mrow { display: flex; gap: 16px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.mrow:first-of-type { border-top: 0; }
+.mrow span:first-child { flex: none; width: 84px; color: var(--muted); }
+.mrow span:last-child { min-width: 0; word-break: break-all; }
+.foot { margin: 40px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.hero > * { animation: rise .5s cubic-bezier(.22,.8,.3,1) both; }
+.hero > *:nth-child(2) { animation-delay: .04s; }
+.hero > *:nth-child(3) { animation-delay: .08s; }
+.hero > *:nth-child(4) { animation-delay: .12s; }
+.dashboard > * { animation: rise .5s cubic-bezier(.22,.8,.3,1) both; }
+.dashboard > *:nth-child(2) { animation-delay: .05s; }
+.dashboard > *:nth-child(3) { animation-delay: .1s; }
+.dashboard > *:nth-child(4) { animation-delay: .15s; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+@media (max-width: 900px) {
+  .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .kpi:nth-child(3n) { border-right: 0; }
+  .kpi:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
+}
+@media (max-width: 560px) {
+  .page { padding: 40px 16px 56px; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi { border-bottom: 1px solid var(--line); }
+  .kpi:nth-child(2n) { border-right: 0; }
+  .kpi:nth-child(3n) { border-right: 1px solid var(--line); }
+  .card { padding: 18px 16px 16px; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="hero">
+    <p class="eyebrow">CHAT HEATMAP</p>
+    <h1>和 <span id="heroName">TA</span>，一共聊了 <span class="num" id="heroCount">—</span> 条</h1>
+    <p class="sub" id="heroSub">导入导出的 JSON，所有统计都在你的浏览器里完成。</p>
+    <div class="actions">
+      <label class="btn solid" for="fileInput">选择 JSON 文件</label>
+      <input id="fileInput" type="file" accept=".json,application/json" hidden />
+      <button class="btn" id="sampleBtn" type="button">用示例数据看看</button>
+      <select id="talkerSelect" class="select" hidden></select>
+      <button class="btn ghost" id="resetBtn" type="button" hidden>清空</button>
+    </div>
+  </header>
+
+  <div class="drop" id="drop" role="button" tabindex="0">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" />
+      <path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15" />
+    </svg>
+    <p class="drop-title">把聊天记录 JSON 拖到这里</p>
+    <p class="drop-sub">自动识别 CreateTime / IsSender / StrContent / StrTalker 等常见字段，忽略图片、语音和系统消息</p>
+    <p class="drop-error" id="dropError" hidden></p>
+  </div>
+
+  <main class="dashboard" id="dashboard" hidden>
+    <section class="kpis" id="kpis"></section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>日历热力图</h2>
+        <span class="hint" id="calHint"></span>
+      </div>
+      <div class="cal-wrap" id="calWrap">
+        <svg class="chart" id="calSvg" role="img" aria-label="按天的消息量热力图"></svg>
+        <div class="tip" id="calTip"></div>
+      </div>
+      <div class="legend">
+        <span>少</span>
+        <i class="sw lv0"></i><i class="sw lv1"></i><i class="sw lv2"></i><i class="sw lv3"></i><i class="sw lv4"></i>
+        <span>多</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>一周 24 小时</h2>
+        <span class="hint" id="hourHint"></span>
+      </div>
+      <div class="hour-wrap" id="hourWrap">
+        <svg class="chart" id="hourSvg" role="img" aria-label="按星期和小时的消息量热力图"></svg>
+        <div class="tip" id="hourTip"></div>
+      </div>
+      <div class="legend">
+        <span>少</span>
+        <i class="sw lv0"></i><i class="sw lv1"></i><i class="sw lv2"></i><i class="sw lv3"></i><i class="sw lv4"></i>
+        <span>多</span>
+        <span class="gap"></span>
+        <span id="monthLegend"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>每月消息量</h2>
+        <span class="hint" id="monthHint"></span>
+      </div>
+      <div class="months" id="months">
+        <div class="tip" id="monthTip"></div>
+      </div>
+    </section>
+
+    <details class="card meta" id="metaBox">
+      <summary>数据识别结果</summary>
+      <div id="meta" style="margin-top:8px"></div>
+    </details>
+  </main>
+
+  <p class="foot">所有计算都在浏览器本地完成，数据不会离开这台设备。</p>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var DAY = 86400000;
+  var WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+  var CANDIDATES = {
+    time: ["CreateTime", "createTime", "create_time", "timestamp", "Timestamp", "msgTime", "msg_time", "sendTime", "send_time", "Datetime", "datetime", "time", "date"],
+    sender: ["IsSender", "isSender", "is_sender", "isSend", "is_send", "direction", "from", "sender", "is_me", "isMe", "self"],
+    type: ["Type", "type", "msgType", "msg_type", "messageType"],
+    content: ["StrContent", "strContent", "content", "text", "msg", "message", "DisplayContent", "displayContent", "body"],
+    talker: ["StrTalker", "strTalker", "talker", "chatId", "chat_id", "conversation", "friend", "contact", "roomId", "username"],
+    name: ["talkerName", "TalkerName", "friendName", "nickname", "remark", "displayName", "name"]
+  };
+  var EXCLUDE_TYPES = new Set([3, 34, 43, 47, 48, 10000, 10002, 10003]);
+  var PLACEHOLDER = /^\[(图片|照片|语音|视频|动画表情|表情|位置|红包|转账|链接|文件|音乐|小程序|聊天记录|名片|GIF)\]$/;
+  var NS = "http://www.w3.org/2000/svg";
+
+  var state = {
+    raw: [],
+    talkers: new Map(),
+    names: new Map(),
+    groupCount: 0,
+    map: {},
+    fileName: "",
+    stats: null,
+    current: null
+  };
+
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function fmt(n) { return Number(n).toLocaleString("zh-CN"); }
+  function pad(n) { return n < 10 ? "0" + n : "" + n; }
+  function ymd(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+
+  function startOfWeek(d) {
+    var x = new Date(d.getTime());
+    x.setHours(0, 0, 0, 0);
+    var off = (x.getDay() + 6) % 7;
+    x.setDate(x.getDate() - off);
+    return x;
+  }
+  function addDays(d, n) {
+    var x = new Date(d.getTime());
+    x.setDate(x.getDate() + n);
+    return x;
+  }
+  function parseTime(value) {
+    if (value === null || value === undefined || value === "") return null;
+    var raw = String(value).trim();
+    if (typeof value === "number" || /^\d{9,13}$/.test(raw)) {
+      var n = Number(raw);
+      if (n < 1e12) n *= 1000;
+      var dt = new Date(n);
+      return isNaN(dt.getTime()) ? null : dt;
+    }
+    var m = raw.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+    if (m) {
+      return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0));
+    }
+    var d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  function parseMe(value) {
+    if (value === null || value === undefined || value === "") return null;
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value === 1;
+    var s = String(value).trim().toLowerCase();
+    if (["1", "true", "self", "me", "我", "自己", "out", "sent", "send", "outgoing"].indexOf(s) >= 0) return true;
+    if (["0", "false", "friend", "other", "对方", "ta", "in", "recv", "received", "incoming"].indexOf(s) >= 0) return false;
+    return null;
+  }
+  function extractRows(raw) {
+    if (Array.isArray(raw)) return raw;
+    if (!raw || typeof raw !== "object") return [];
+    var keys = ["messages", "message", "data", "list", "records", "items", "chat", "chats", "msgs"];
+    for (var i = 0; i < keys.length; i++) {
+      if (Array.isArray(raw[keys[i]])) return raw[keys[i]];
+    }
+    var vals = Object.keys(raw);
+    for (var j = 0; j < vals.length; j++) {
+      var v = raw[vals[j]];
+      if (Array.isArray(v) && v.length && typeof v[0] === "object") return v;
+    }
+    return [];
+  }
+  function detectFields(rows) {
+    var sample = {};
+    for (var i = 0; i < rows.length && i < 60; i++) {
+      if (rows[i] && typeof rows[i] === "object") {
+        Object.keys(rows[i]).forEach(function (k) { if (!(k in sample)) sample[k] = rows[i][k]; });
+      }
+    }
+    var keys = Object.keys(sample);
+    function pick(list, fuzzy) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] in sample) return list[i];
+      }
+      if (fuzzy) {
+        for (var j = 0; j < keys.length; j++) {
+          if (fuzzy.test(keys[j]) && sample[keys[j]] !== null && sample[keys[j]] !== "") return keys[j];
+        }
+      }
+      return null;
+    }
+    return {
+      time: pick(CANDIDATES.time, /time|date|stamp/i),
+      sender: pick(CANDIDATES.sender, /sender|is_?send|direction|is_?me|^from$/i),
+      type: pick(CANDIDATES.type, /^type$|msgtype|msg_type/i),
+      content: pick(CANDIDATES.content, /content|text|msg|body/i),
+      talker: pick(CANDIDATES.talker, /talker|chat|conversation|room|contact|friend/i),
+      name: pick(CANDIDATES.name, /name|remark|nick/i)
+    };
+  }
+  function detectId(rows) {
+    var cands = ["localId", "localID", "msgId", "MsgSvrID", "msgSvrId", "id"];
+    for (var i = 0; i < rows.length && i < 30; i++) {
+      var r = rows[i];
+      if (!r || typeof r !== "object") continue;
+      for (var j = 0; j < cands.length; j++) if (cands[j] in r) return cands[j];
+    }
+    return null;
+  }
+
+  function load(raw, fileName) {
+    var rows = extractRows(raw);
+    if (!rows.length) {
+      showError("没有在 JSON 里找到消息数组。支持数组本身，或 { messages: [...] } / { data: [...] } 这类结构。");
+      return;
+    }
+    var map = detectFields(rows);
+    if (!map.time) {
+      showError("没有识别到时间字段。请确认导出里包含 CreateTime / timestamp / time 之类的字段。");
+      return;
+    }
+    var idKey = detectId(rows);
+    var seen = idKey ? new Set() : null;
+    var msgs = [];
+    var ignored = 0, badTime = 0, dup = 0, empty = 0;
+    var names = new Map();
+
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      if (!row || typeof row !== "object") continue;
+      if (seen && row[idKey] !== null && row[idKey] !== undefined) {
+        var id = String(row[idKey]);
+        if (seen.has(id)) { dup++; continue; }
+        seen.add(id);
+      }
+      var t = parseTime(row[map.time]);
+      if (!t) { badTime++; continue; }
+      var text = map.content ? row[map.content] : "";
+      if (text && typeof text === "object") text = text.text || text.content || "";
+      text = text === null || text === undefined ? "" : String(text).trim();
+      var type = map.type ? Number(row[map.type]) : NaN;
+      if (EXCLUDE_TYPES.has(type) || PLACEHOLDER.test(text)) { ignored++; continue; }
+      if (!text) { empty++; continue; }
+      var talker = map.talker && row[map.talker] !== null && row[map.talker] !== undefined ? String(row[map.talker]) : "";
+      if (talker && map.name && row[map.name] && !names.has(talker)) names.set(talker, String(row[map.name]));
+      msgs.push({ t: t, me: map.sender ? parseMe(row[map.sender]) : null, talker: talker });
+    }
+
+    if (!msgs.length) {
+      showError("解析到 " + fmt(rows.length) + " 条记录，但没有可用于统计的文本消息（图片、语音、系统消息都被排除了）。");
+      return;
+    }
+
+    var counts = new Map();
+    msgs.forEach(function (m) { counts.set(m.talker, (counts.get(m.talker) || 0) + 1); });
+    var groups = [];
+    var singles = [];
+    counts.forEach(function (n, k) {
+      if (k && k.indexOf("@chatroom") >= 0) groups.push(k);
+      else singles.push(k);
+    });
+    var options = singles.length ? singles : Array.from(counts.keys());
+    options.sort(function (a, b) { return counts.get(b) - counts.get(a); });
+
+    state.raw = msgs;
+    state.talkers = counts;
+    state.names = names;
+    state.groupCount = groups.length;
+    state.map = map;
+    state.fileName = fileName || "";
+    state.stats = { rows: rows.length, valid: msgs.length, ignored: ignored, badTime: badTime, dup: dup, empty: empty };
+    state.current = options[0];
+
+    var select = $("#talkerSelect");
+    select.innerHTML = "";
+    if (options.length > 1) {
+      options.forEach(function (k) {
+        var opt = document.createElement("option");
+        opt.value = k;
+        opt.textContent = optionLabel(k) + " · " + fmt(counts.get(k)) + " 条";
+        select.appendChild(opt);
+      });
+      select.value = state.current;
+      select.hidden = false;
+    } else {
+      select.hidden = true;
+    }
+
+    $("#resetBtn").hidden = false;
+    $("#dropError").hidden = true;
+    render();
+  }
+
+  function optionLabel(talker) {
+    var name = displayName(talker);
+    if (name !== "TA" || !talker) return name;
+    var tail = talker.replace(/^wxid_/i, "");
+    return "好友 " + (tail.length > 8 ? tail.slice(0, 8) + "…" : tail);
+  }
+
+  function displayName(talker) {
+    if (!talker) {
+      if (state.fileName) return state.fileName.replace(/\.json$/i, "");
+      return "TA";
+    }
+    if (state.names.has(talker)) return state.names.get(talker);
+    if (/^wxid_/i.test(talker) || talker.length > 18) return "TA";
+    return talker;
+  }
+
+  function showError(msg) {
+    var el = $("#dropError");
+    el.textContent = msg;
+    el.hidden = false;
+    $("#drop").classList.add("over");
+  }
+
+  function analyze(msgs) {
+    var days = new Map();
+    var hours = [];
+    for (var i = 0; i < 7; i++) hours.push(new Array(24).fill(0));
+    var months = new Map();
+    var minTs = Infinity, maxTs = -Infinity, me = 0, other = 0;
+
+    for (var j = 0; j < msgs.length; j++) {
+      var m = msgs[j];
+      var ts = m.t.getTime();
+      if (ts < minTs) minTs = ts;
+      if (ts > maxTs) maxTs = ts;
+
+      var key = ymd(m.t);
+      var d = days.get(key);
+      if (!d) { d = { total: 0, me: 0, other: 0 }; days.set(key, d); }
+      d.total++;
+      if (m.me === true) { d.me++; me++; } else if (m.me === false) { d.other++; other++; }
+
+      var wd = (m.t.getDay() + 6) % 7;
+      hours[wd][m.t.getHours()]++;
+
+      var mk = m.t.getFullYear() + "-" + pad(m.t.getMonth() + 1);
+      var mo = months.get(mk);
+      if (!mo) { mo = { total: 0, me: 0, other: 0 }; months.set(mk, mo); }
+      mo.total++;
+      if (m.me === true) mo.me++; else if (m.me === false) mo.other++;
+    }
+
+    var first = new Date(minTs); first.setHours(0, 0, 0, 0);
+    var last = new Date(maxTs); last.setHours(0, 0, 0, 0);
+    var span = Math.round((last - first) / DAY) + 1;
+
+    var streak = 0, bestStreak = 0;
+    var cursor = new Date(first.getTime());
+    while (cursor <= last) {
+      if (days.has(ymd(cursor))) {
+        streak++;
+        if (streak > bestStreak) bestStreak = streak;
+      } else {
+        streak = 0;
+      }
+      cursor = addDays(cursor, 1);
+    }
+
+    var busiest = null;
+    days.forEach(function (v, k) {
+      if (!busiest || v.total > busiest.total) busiest = { key: k, total: v.total };
+    });
+
+    var sorted = Array.from(days.keys()).sort();
+    var silent = 0, silentFrom = "", silentTo = "";
+    for (var s = 1; s < sorted.length; s++) {
+      var a = new Date(sorted[s - 1] + "T00:00:00");
+      var b = new Date(sorted[s] + "T00:00:00");
+      var gap = Math.round((b - a) / DAY) - 1;
+      if (gap > silent) { silent = gap; silentFrom = sorted[s - 1]; silentTo = sorted[s]; }
+    }
+
+    var peakHour = 0, peakCount = -1, peakWd = 0;
+    var hourTotals = new Array(24).fill(0);
+    for (var w = 0; w < 7; w++) {
+      for (var h = 0; h < 24; h++) {
+        var c = hours[w][h];
+        hourTotals[h] += c;
+        if (c > peakCount) { peakCount = c; peakHour = h; peakWd = w; }
+      }
+    }
+
+    return {
+      days: days, hours: hours, months: months, minTs: minTs, maxTs: maxTs,
+      me: me, other: other, total: msgs.length, span: span,
+      bestStreak: bestStreak, busiest: busiest,
+      silent: silent, silentFrom: silentFrom, silentTo: silentTo,
+      peakHour: peakHour, peakWd: peakWd, peakCount: peakCount, hourTotals: hourTotals
+    };
+  }
+
+  function thresholds(values) {
+    var nz = values.filter(function (v) { return v > 0; }).sort(function (a, b) { return a - b; });
+    if (!nz.length) return [0, 0, 0, 0];
+    function q(p) { return nz[Math.min(nz.length - 1, Math.floor(p * (nz.length - 1)))]; }
+    return [q(0.3), q(0.55), q(0.78), q(1)];
+  }
+  function levelOf(v, th) {
+    if (v <= 0) return 0;
+    if (v <= th[0]) return 1;
+    if (v <= th[1]) return 2;
+    if (v <= th[2]) return 3;
+    return 4;
+  }
+
+  function svgEl(name, attrs) {
+    var el = document.createElementNS(NS, name);
+    if (attrs) {
+      Object.keys(attrs).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+    }
+    return el;
+  }
+
+  function dateLabel(key) {
+    var p = key.split("-");
+    return +p[0] + "年" + +p[1] + "月" + +p[2] + "日";
+  }
+  function shortDate(key) {
+    var p = key.split("-");
+    return +p[1] + "月" + +p[2] + "日";
+  }
+
+  function renderCalendar(days, minTs, maxTs) {
+    var svg = $("#calSvg");
+    svg.innerHTML = "";
+    var padL = 38, padT = 22, cell = 12, gap = 3, step = cell + gap;
+    var start = startOfWeek(new Date(minTs));
+    var endWeek = startOfWeek(new Date(maxTs));
+    var weeks = 0;
+    for (var d = new Date(start.getTime()); d <= endWeek; d = addDays(d, 7)) weeks++;
+    var capped = false;
+    if (weeks > 78) {
+      weeks = 78;
+      start = addDays(endWeek, -(weeks - 1) * 7);
+      capped = true;
+    }
+    var W = padL + weeks * step + 6;
+    var H = padT + 7 * step + 4;
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+
+    var labels = ["一", "", "三", "", "五", "", "日"];
+    for (var r = 0; r < 7; r++) {
+      if (!labels[r]) continue;
+      var wt = svgEl("text", { x: padL - 8, y: padT + r * step + cell - 1, "text-anchor": "end" });
+      wt.setAttribute("class", "cal-w");
+      wt.textContent = labels[r];
+      svg.appendChild(wt);
+    }
+
+    var prevMonth = -1;
+    var values = [];
+    days.forEach(function (v) { values.push(v.total); });
+    var th = thresholds(values);
+    var peakKey = null, peakVal = -1;
+    var startTs = start.getTime();
+    days.forEach(function (v, k) {
+      var ts = new Date(k + "T00:00:00").getTime();
+      if (ts < startTs || ts > maxTs) return;
+      if (v.total > peakVal) { peakVal = v.total; peakKey = k; }
+    });
+
+    for (var w = 0; w < weeks; w++) {
+      var monday = addDays(start, w * 7);
+      var month = monday.getMonth();
+      if (month !== prevMonth) {
+        var mt = svgEl("text", { x: padL + w * step, y: padT - 8 });
+        mt.setAttribute("class", "cal-m");
+        mt.textContent = (month + 1) + "月";
+        svg.appendChild(mt);
+        prevMonth = month;
+      }
+      for (var row = 0; row < 7; row++) {
+        var date = addDays(start, w * 7 + row);
+        if (date.getTime() > maxTs) continue;
+        var key = ymd(date);
+        var count = days.has(key) ? days.get(key).total : 0;
+        var rect = svgEl("rect", {
+          x: padL + w * step,
+          y: padT + row * step,
+          width: cell,
+          height: cell,
+          rx: 2.5
+        });
+        rect.setAttribute("class", "cell lv" + levelOf(count, th) + (key === peakKey && count > 0 ? " peak" : ""));
+        rect.setAttribute("data-date", key);
+        rect.setAttribute("data-count", count);
+        svg.appendChild(rect);
+      }
+    }
+
+    $("#calHint").textContent = (capped ? "最近 18 个月" : "共 " + weeks + " 周") + " · 最深的一天 " + shortDate(peakKey) + "（" + fmt(peakVal) + " 条）";
+  }
+
+  function renderHours(hours) {
+    var svg = $("#hourSvg");
+    svg.innerHTML = "";
+    var padL = 40, padT = 18, cw = 24, ch = 20, gx = 3, gy = 3;
+    var W = padL + 24 * (cw + gx);
+    var H = padT + 7 * (ch + gy) + 14;
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    var values = [];
+    for (var i = 0; i < 7; i++) for (var j = 0; j < 24; j++) values.push(hours[i][j]);
+    var th = thresholds(values);
+
+    for (var r = 0; r < 7; r++) {
+      var t = svgEl("text", { x: padL - 10, y: padT + r * (ch + gy) + ch - 5, "text-anchor": "end" });
+      t.setAttribute("class", "cal-w");
+      t.textContent = ["一", "二", "三", "四", "五", "六", "日"][r];
+      svg.appendChild(t);
+    }
+    [0, 3, 6, 9, 12, 15, 18, 21].forEach(function (h) {
+      var t = svgEl("text", { x: padL + h * (cw + gx) + cw / 2, y: H - 3, "text-anchor": "middle" });
+      t.setAttribute("class", "cal-m");
+      t.textContent = h;
+      svg.appendChild(t);
+    });
+
+    var peak = -1;
+    for (var r2 = 0; r2 < 7; r2++) for (var c2 = 0; c2 < 24; c2++) if (hours[r2][c2] > peak) peak = hours[r2][c2];
+
+    for (var row = 0; row < 7; row++) {
+      for (var col = 0; col < 24; col++) {
+        var v = hours[row][col];
+        var cell = svgEl("rect", {
+          x: padL + col * (cw + gx),
+          y: padT + row * (ch + gy),
+          width: cw,
+          height: ch,
+          rx: 3
+        });
+        cell.setAttribute("class", "cell lv" + levelOf(v, th) + (v === peak && v > 0 ? " peak" : ""));
+        cell.setAttribute("data-wd", row);
+        cell.setAttribute("data-h", col);
+        cell.setAttribute("data-count", v);
+        svg.appendChild(cell);
+      }
+    }
+  }
+
+  function buildMonthKeys(minTs, maxTs) {
+    var d = new Date(minTs);
+    d = new Date(d.getFullYear(), d.getMonth(), 1);
+    var end = new Date(maxTs);
+    end = new Date(end.getFullYear(), end.getMonth(), 1);
+    var keys = [];
+    while (d <= end) {
+      keys.push(d.getFullYear() + "-" + pad(d.getMonth() + 1));
+      d = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+    }
+    var capped = false;
+    if (keys.length > 24) { keys = keys.slice(-24); capped = true; }
+    return { keys: keys, capped: capped };
+  }
+
+  function renderMonths(months, minTs, maxTs, senderKnown) {
+    var wrap = $("#months");
+    wrap.innerHTML = '<div class="tip" id="monthTip"></div>';
+    var built = buildMonthKeys(minTs, maxTs);
+    var max = 1;
+    built.keys.forEach(function (k) {
+      var m = months.get(k);
+      if (m && m.total > max) max = m.total;
+    });
+    var chartH = 150;
+    built.keys.forEach(function (k, idx) {
+      var m = months.get(k) || { total: 0, me: 0, other: 0 };
+      var h = m.total ? Math.max(3, Math.round((m.total / max) * chartH)) : 0;
+      var col = document.createElement("div");
+      col.className = "mcol";
+      col.setAttribute("data-label", (+k.slice(0, 4)) + "年" + (+k.slice(5)) + "月");
+      col.setAttribute("data-total", m.total);
+      col.setAttribute("data-me", m.me);
+      col.setAttribute("data-other", m.other);
+
+      var bar = document.createElement("div");
+      bar.className = "mbar";
+      bar.style.height = h + "px";
+      if (senderKnown) {
+        var otherPct = m.total ? (m.other / m.total) * 100 : 0;
+        var mePct = m.total ? (m.me / m.total) * 100 : 0;
+        var segO = document.createElement("div");
+        segO.className = "seg other";
+        segO.style.height = otherPct + "%";
+        var segM = document.createElement("div");
+        segM.className = "seg me";
+        segM.style.height = mePct + "%";
+        bar.appendChild(segO);
+        bar.appendChild(segM);
+      } else {
+        var seg = document.createElement("div");
+        seg.className = "seg all";
+        seg.style.height = "100%";
+        bar.appendChild(seg);
+      }
+      col.appendChild(bar);
+
+      var lab = document.createElement("div");
+      lab.className = "mlabel";
+      var monthNum = +k.slice(5);
+      if (idx % 3 === 0) lab.textContent = monthNum + "月";
+      col.appendChild(lab);
+      wrap.appendChild(col);
+    });
+    $("#monthHint").textContent = (built.capped ? "最近 24 个月" : "共 " + built.keys.length + " 个月") + " · 峰值 " + fmt(max) + " 条/月";
+  }
+
+  function bindTip(wrap, tip, selector) {
+    var active = null;
+    function place(e) {
+      var box = wrap.getBoundingClientRect();
+      var x = e.clientX - box.left;
+      var y = e.clientY - box.top;
+      var w = tip.offsetWidth || 80;
+      x = Math.min(Math.max(x, w / 2 + 8), box.width - w / 2 - 8);
+      tip.style.left = x + "px";
+      tip.style.top = Math.max(y, 10) + "px";
+    }
+    wrap.addEventListener("pointerover", function (e) {
+      var el = e.target.closest(selector);
+      if (!el) return;
+      var text = el.getAttribute("data-tip");
+      if (!text) return;
+      active = el;
+      tip.textContent = text;
+      tip.classList.add("on");
+      place(e);
+    });
+    wrap.addEventListener("pointermove", function (e) {
+      if (active) place(e);
+    });
+    wrap.addEventListener("pointerout", function (e) {
+      if (active && !active.contains(e.relatedTarget)) {
+        active = null;
+        tip.classList.remove("on");
+      }
+    });
+  }
+
+  function renderKpis(a, msgs) {
+    var senderKnown = a.me + a.other > 0;
+    var totalNote = senderKnown
+      ? "我 " + Math.round((a.me / a.total) * 100) + "% · TA " + Math.round((a.other / a.total) * 100) + "%"
+      : "";
+    var busiest = a.busiest || { key: "", total: 0 };
+    var items = [
+      { label: "总消息", value: fmt(a.total), note: totalNote },
+      { label: "聊天天数", value: fmt(a.days.size), note: "跨度 " + fmt(a.span) + " 天" },
+      { label: "最长连续", value: a.bestStreak + " 天", note: "每天都说话" },
+      { label: "最热闹", value: shortDate(busiest.key), note: fmt(busiest.total) + " 条", small: true },
+      { label: "最长沉默", value: a.silent + " 天", note: a.silent > 0 ? shortDate(a.silentFrom) + " → " + shortDate(a.silentTo) : "没有断过" },
+      { label: "最活跃", value: WEEKDAYS[a.peakWd] + " " + a.peakHour + " 点", note: "峰值 " + fmt(a.peakCount) + " 条", small: true }
+    ];
+    var box = $("#kpis");
+    box.innerHTML = "";
+    items.forEach(function (it) {
+      var cell = document.createElement("div");
+      cell.className = "kpi";
+      var l = document.createElement("p");
+      l.className = "k-label";
+      l.textContent = it.label;
+      var v = document.createElement("p");
+      v.className = "k-value" + (it.small ? " sm" : "");
+      v.textContent = it.value;
+      var n = document.createElement("p");
+      n.className = "k-note";
+      n.textContent = it.note;
+      cell.appendChild(l);
+      cell.appendChild(v);
+      cell.appendChild(n);
+      box.appendChild(cell);
+    });
+  }
+
+  function renderMeta(a) {
+    var map = state.map;
+    var st = state.stats;
+    var fieldBits = [];
+    if (map.time) fieldBits.push("时间 " + map.time);
+    if (map.sender) fieldBits.push("发送方 " + map.sender);
+    if (map.content) fieldBits.push("内容 " + map.content);
+    if (map.talker) fieldBits.push("会话 " + map.talker);
+    if (map.name) fieldBits.push("名称 " + map.name);
+
+    var rows = [
+      ["识别字段", fieldBits.join(" · ")],
+      ["原始记录", fmt(st.rows) + " 条"],
+      ["有效消息", fmt(st.valid) + " 条，已忽略 " + fmt(st.ignored) + " 条图片/语音/表情等"],
+      ["跳过的数据", "无有效时间 " + fmt(st.badTime) + " 条 · 重复 " + fmt(st.dup) + " 条 · 空内容 " + fmt(st.empty) + " 条"],
+      ["当前会话", displayName(state.current) + " · " + fmt(a.total) + " 条"]
+    ];
+    if (state.groupCount) rows.push(["群聊", "已跳过 " + state.groupCount + " 个群聊会话"]);
+
+    var box = $("#meta");
+    box.innerHTML = "";
+    rows.forEach(function (r) {
+      var row = document.createElement("div");
+      row.className = "mrow";
+      var k = document.createElement("span");
+      k.textContent = r[0];
+      var v = document.createElement("span");
+      v.textContent = r[1];
+      row.appendChild(k);
+      row.appendChild(v);
+      box.appendChild(row);
+    });
+  }
+
+  function render() {
+    var msgs = state.raw.filter(function (m) { return !state.current || m.talker === state.current; });
+    if (!msgs.length) { showError("这个会话里没有可统计的消息。"); return; }
+
+    var a = analyze(msgs);
+
+    $("#heroName").textContent = displayName(state.current);
+    $("#heroCount").textContent = fmt(a.total);
+    var first = new Date(a.minTs);
+    var last = new Date(a.maxTs);
+    var avg = (a.total / a.span).toFixed(1).replace(/\.0$/, "");
+    $("#heroSub").textContent = first.getFullYear() + "年" + (first.getMonth() + 1) + "月" + first.getDate() + "日 — " +
+      last.getFullYear() + "年" + (last.getMonth() + 1) + "月" + last.getDate() + "日 · 平均每天 " + avg + " 条";
+
+    renderKpis(a, msgs);
+    renderCalendar(a.days, a.minTs, a.maxTs);
+    renderHours(a.hours);
+    var senderKnown = a.me + a.other > 0;
+    renderMonths(a.months, a.minTs, a.maxTs, senderKnown);
+    $("#monthLegend").innerHTML = senderKnown
+      ? '<span class="lg"><i style="background:var(--me)"></i>我</span><span class="lg"><i style="background:var(--other)"></i>TA</span>'
+      : "";
+    $("#hourHint").textContent = "最活跃 " + WEEKDAYS[a.peakWd] + " " + a.peakHour + ":00";
+    renderMeta(a);
+
+    $("#dashboard").hidden = false;
+    $("#drop").hidden = true;
+
+    var calTip = $("#calTip");
+    calTip.classList.remove("on");
+    var cells = $("#calSvg").querySelectorAll("rect[data-date]");
+    for (var i = 0; i < cells.length; i++) {
+      var c = cells[i];
+      c.setAttribute("data-tip", dateLabel(c.getAttribute("data-date")) + " · " + fmt(c.getAttribute("data-count")) + " 条");
+    }
+    var hcells = $("#hourSvg").querySelectorAll("rect[data-wd]");
+    for (var j = 0; j < hcells.length; j++) {
+      var hc = hcells[j];
+      var wd = +hc.getAttribute("data-wd");
+      var hour = +hc.getAttribute("data-h");
+      hc.setAttribute("data-tip", WEEKDAYS[wd] + " " + pad(hour) + ":00 · " + fmt(hc.getAttribute("data-count")) + " 条");
+    }
+    var mcols = $("#months").querySelectorAll(".mcol");
+    for (var k = 0; k < mcols.length; k++) {
+      var mc = mcols[k];
+      var tip = mc.getAttribute("data-label") + " · " + fmt(mc.getAttribute("data-total")) + " 条";
+      if (senderKnown) tip += "（我 " + fmt(mc.getAttribute("data-me")) + " · TA " + fmt(mc.getAttribute("data-other")) + "）";
+      mc.setAttribute("data-tip", tip);
+    }
+  }
+
+  function readFile(file) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var json = JSON.parse(reader.result);
+        load(json, file.name);
+      } catch (err) {
+        showError("JSON 解析失败：" + err.message);
+      }
+    };
+    reader.onerror = function () { showError("文件读取失败，请重试。"); };
+    reader.readAsText(file, "utf-8");
+  }
+
+  function makeSample() {
+    var end = new Date();
+    end.setHours(0, 0, 0, 0);
+    var start = new Date(end.getFullYear() - 4, end.getMonth(), 1);
+    var lines = [
+      "早", "早呀", "吃了吗", "刚吃完", "在干嘛", "上班呢", "今天好累", "我也是", "哈哈哈哈", "真的假的",
+      "笑死", "晚安", "我到啦", "路上小心", "周末有空吗", "看情况", "想你了", "我也想你", "给我看看", "等一下",
+      "马上到", "你先睡吧", "不困", "今天天气不错", "下雨了记得带伞", "好", "嗯嗯", "行", "那就这样", "明天见",
+      "这家店好吃", "下次一起去", "你猜", "我不猜", "别闹", "正经点", "我认真的", "好吧", "服了你了", "冲",
+      "绝了", "？？？", "！！！", "我到了给你说", "刚开完会", "晚点聊", "你在哪", "快到了", "注意安全", "晚安好梦"
+    ];
+    var hourWeights = [2, 1, 1, 1, 1, 2, 5, 8, 10, 9, 10, 12, 14, 10, 9, 9, 10, 11, 13, 16, 22, 26, 24, 14];
+    var weights = [];
+    hourWeights.forEach(function (w, h) { for (var i = 0; i < w; i++) weights.push(h); });
+
+    var out = [];
+    var d = new Date(start.getTime());
+    var id = 1;
+    while (d <= end) {
+      var n = 0;
+      if (Math.random() < 0.82) {
+        n = 1 + Math.floor(Math.random() * 7);
+        if (Math.random() < 0.16) n += Math.floor(Math.random() * 20);
+      }
+      for (var i = 0; i < n; i++) {
+        var hour = weights[Math.floor(Math.random() * weights.length)];
+        var stamp = new Date(d.getFullYear(), d.getMonth(), d.getDate(), hour, Math.floor(Math.random() * 60), Math.floor(Math.random() * 60));
+        var r = Math.random();
+        var type = 1;
+        var text = lines[Math.floor(Math.random() * lines.length)];
+        if (r < 0.035) { type = 3; text = "[图片]"; }
+        else if (r < 0.055) { type = 34; text = "[语音]"; }
+        else if (r < 0.065) { type = 10000; text = "你撤回了一条消息"; }
+        out.push({
+          localId: id++,
+          CreateTime: Math.floor(stamp.getTime() / 1000),
+          IsSender: Math.random() < 0.52 ? 1 : 0,
+          Type: type,
+          StrContent: text,
+          StrTalker: "wxid_xiaoman",
+          talkerName: "小满"
+        });
+      }
+      d = addDays(d, 1);
+    }
+    return out;
+  }
+
+  function reset() {
+    state.raw = [];
+    state.talkers = new Map();
+    state.names = new Map();
+    state.current = null;
+    state.stats = null;
+    state.fileName = "";
+    $("#dashboard").hidden = true;
+    $("#drop").hidden = false;
+    $("#dropError").hidden = true;
+    $("#drop").classList.remove("over");
+    $("#resetBtn").hidden = true;
+    $("#talkerSelect").hidden = true;
+    $("#fileInput").value = "";
+    $("#heroName").textContent = "TA";
+    $("#heroCount").textContent = "—";
+    $("#heroSub").textContent = "导入导出的 JSON，所有统计都在你的浏览器里完成。";
+  }
+
+  function init() {
+    var input = $("#fileInput");
+    input.addEventListener("change", function () {
+      if (input.files && input.files[0]) readFile(input.files[0]);
+    });
+
+    $("#sampleBtn").addEventListener("click", function () {
+      load(makeSample(), "小满.json");
+    });
+
+    $("#resetBtn").addEventListener("click", reset);
+
+    $("#talkerSelect").addEventListener("change", function (e) {
+      state.current = e.target.value;
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+
+    var drop = $("#drop");
+    drop.addEventListener("click", function () { input.click(); });
+    drop.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); }
+    });
+    ["dragenter", "dragover"].forEach(function (ev) {
+      drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("over"); });
+    });
+    ["dragleave", "drop"].forEach(function (ev) {
+      drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove("over"); });
+    });
+    drop.addEventListener("drop", function (e) {
+      var files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files[0]) readFile(files[0]);
+    });
+
+    bindTip($("#calWrap"), $("#calTip"), "rect[data-date]");
+    bindTip($("#hourWrap"), $("#hourTip"), "rect[data-wd]");
+    bindTip($("#months"), $("#monthTip"), ".mcol");
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

@@ -311,10 +311,10 @@ class _GalleryScreenState extends State<GalleryScreen> {
               ? _empty()
               : MasonryGridView.count(
                   controller: _controller,
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.all(12),
                   crossAxisCount: effective,
-                  mainAxisSpacing: 8,
-                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
                   itemCount: _rows.length,
                   itemBuilder: (context, index) {
                     final row = _rows[index];

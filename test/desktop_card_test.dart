@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightcone_flutter/ui/artwork_card.dart';
+import 'package:lightcone_flutter/ui/tone.dart';
 
 final _onePixel = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -14,6 +15,20 @@ final _onePixel = base64Decode(
 /// 手机端（不传 onContextMenu）必须保持「右键=长按」的老语义。
 void main() {
   Widget host(Widget child) => MaterialApp(
+        home: Scaffold(
+          body: Align(alignment: Alignment.topLeft, child: child),
+        ),
+      );
+
+  /// 悬停那套「面提一级」的观感只在深色主题下成立（浅色主题里卡片面已经
+  /// 是最亮的一层，反馈交给描边），所以要显式挂上深色令牌来验。
+  Widget hostDark(Widget child) => MaterialApp(
+        theme: ThemeData(
+          brightness: Brightness.dark,
+          extensions: <ThemeExtension<dynamic>>[
+            ToneTokens.of(kArchiveTone.dark, Brightness.dark),
+          ],
+        ),
         home: Scaffold(
           body: Align(alignment: Alignment.topLeft, child: child),
         ),
@@ -75,32 +90,49 @@ void main() {
     expect(longPresses, 1);
   });
 
-  testWidgets('鼠标进入卡片时描边高亮（悬停态）', (tester) async {
-    await tester.pumpWidget(host(card(onFavorite: () {})));
+  testWidgets('鼠标进入卡片时面提一级（悬停态）', (tester) async {
+    await tester.pumpWidget(hostDark(card(onFavorite: () {})));
     await tester.pump();
 
-    Material material() => tester.widget<Material>(
-          find
-              .descendant(
-                of: find.byType(ArtworkCard),
-                matching: find.byType(Material),
-              )
-              .first,
-        );
-    expect(material().elevation, 0);
+    // 悬停的观感落在卡片最外层那层装饰上（Deep 色：case → caseHi）。
+    BoxDecoration decoration() {
+      final box = tester.widget<DecoratedBox>(
+        find
+            .descendant(
+              of: find.byType(ArtworkCard),
+              matching: find.byType(DecoratedBox),
+            )
+            .first,
+      );
+      return box.decoration as BoxDecoration;
+    }
+
+    expect(
+      decoration().color,
+      kArchiveTone.dark.kase,
+      reason: '深色主题下卡片常态用 case 面',
+    );
 
     final pointer = TestPointer(1, PointerDeviceKind.mouse);
     await tester.sendEventToBinding(
       pointer.hover(tester.getCenter(find.byType(ArtworkCard))),
     );
     await tester.pumpAndSettle();
-    expect(material().elevation, greaterThan(0), reason: '悬停应抬升卡片');
+    expect(
+      decoration().color,
+      kArchiveTone.dark.kaseHi,
+      reason: '悬停应提亮一档',
+    );
 
     await tester.sendEventToBinding(
       pointer.hover(const Offset(2000, 2000)),
     );
     await tester.pumpAndSettle();
-    expect(material().elevation, 0, reason: '移出应复位');
+    expect(
+      decoration().color,
+      kArchiveTone.dark.kase,
+      reason: '移出应复位',
+    );
   });
 
   testWidgets('给了 onTapModified：普通点击带 ctrl=false/shift=false', (tester) async {

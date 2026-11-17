@@ -72,6 +72,26 @@ class ToneSet {
 
   /// 强调色上的文字。
   final Color onAccent;
+
+  /// 逐色插值。切深浅主题时令牌必须跟着一起过渡 —— 否则 ColorScheme 在
+  /// 渐变、令牌是硬切，界面上会看到「一半丝滑一半跳帧」。
+  static ToneSet lerp(ToneSet a, ToneSet b, double t) => ToneSet(
+        bg: Color.lerp(a.bg, b.bg, t)!,
+        fg: Color.lerp(a.fg, b.fg, t)!,
+        fgSoft: Color.lerp(a.fgSoft, b.fgSoft, t)!,
+        textMuted: Color.lerp(a.textMuted, b.textMuted, t)!,
+        mark: Color.lerp(a.mark, b.mark, t)!,
+        lineDim: Color.lerp(a.lineDim, b.lineDim, t)!,
+        lineFaint: Color.lerp(a.lineFaint, b.lineFaint, t)!,
+        hair: Color.lerp(a.hair, b.hair, t)!,
+        panel: Color.lerp(a.panel, b.panel, t)!,
+        panelHi: Color.lerp(a.panelHi, b.panelHi, t)!,
+        kase: Color.lerp(a.kase, b.kase, t)!,
+        kaseHi: Color.lerp(a.kaseHi, b.kaseHi, t)!,
+        well: Color.lerp(a.well, b.well, t)!,
+        accent: Color.lerp(a.accent, b.accent, t)!,
+        onAccent: Color.lerp(a.onAccent, b.onAccent, t)!,
+      );
 }
 
 /// 一个配色方案：明暗两套令牌。
@@ -449,6 +469,46 @@ const List<ToneScheme> kToneSchemes = <ToneScheme>[
   kCrimsonTone,
 ];
 
+/// 把一个颜色的彩度按比例压低（明度、色相不动）。
+Color _desaturate(Color c, double amount) {
+  final hsl = HSLColor.fromColor(c);
+  return hsl
+      .withSaturation((hsl.saturation * amount).clamp(0.0, 1.0))
+      .toColor();
+}
+
+/// 柔和化：把**面积大的那几层**的彩度压下去，只留 accent 有颜色。
+///
+/// Tauri 的原令牌是给深底、高对比的机箱界面调的 —— 每一层都带同一档
+/// 彩度。搬到浅色主题上，背景、面板、卡片、胶囊就全挤进同一个色相窄带
+/// 里，层次只剩几个色阶的明度差，看上去既「糊」又「乱」：满屏都是粉的
+/// 不同深浅，没有一处是中性的休止符。
+///
+/// 压掉大面积色的彩度之后，分层回到明度上（白卡片浮在浅灰底上），
+/// 强调色重新成为整屏唯一的彩色焦点。
+ToneSet softenTones(ToneSet t, Brightness brightness) {
+  final amount = brightness == Brightness.dark ? 0.55 : 0.28;
+  Color face(Color c) => _desaturate(c, amount);
+  Color ink(Color c) => _desaturate(c, 0.55);
+  return ToneSet(
+    bg: face(t.bg),
+    fg: ink(t.fg),
+    fgSoft: ink(t.fgSoft),
+    textMuted: ink(t.textMuted),
+    mark: ink(t.mark),
+    lineDim: face(t.lineDim),
+    lineFaint: face(t.lineFaint),
+    hair: face(t.hair),
+    panel: face(t.panel),
+    panelHi: face(t.panelHi),
+    kase: face(t.kase),
+    kaseHi: face(t.kaseHi),
+    well: face(t.well),
+    accent: t.accent,
+    onAccent: t.onAccent,
+  );
+}
+
 /// 把令牌映射成 Material 的 ColorScheme，让现有组件不改一行就吃到新配色。
 ///
 /// 映射是个取舍：Material 的层级比这套令牌少，case 与 caseHi 只能各挑一个
@@ -462,6 +522,19 @@ ColorScheme colorSchemeFromTones(ToneSet t, Brightness brightness) {
     onPrimaryContainer: t.fg,
     secondary: t.fgSoft,
     onSecondary: t.bg,
+    // 这几个原来没给，M3 会退回一组和这套配色无关的推导色：
+    // 底部导航选中图标取 onSecondaryContainer，缺它时落到 onSecondary
+    // （= 背景色），浅色主题下就是「白图标压在近白胶囊上」，看不见。
+    secondaryContainer: t.kaseHi,
+    onSecondaryContainer: t.fg,
+    tertiary: t.accent,
+    onTertiary: t.onAccent,
+    tertiaryContainer: t.kaseHi,
+    onTertiaryContainer: t.fg,
+    errorContainer: t.kase,
+    onErrorContainer: t.fg,
+    surfaceDim: t.well,
+    surfaceBright: t.panelHi,
     error: const Color(0xFFD24B3E),
     onError: const Color(0xFFFFFFFF),
     surface: t.bg,
@@ -482,15 +555,159 @@ ColorScheme colorSchemeFromTones(ToneSet t, Brightness brightness) {
   );
 }
 
+/// 明暗两套里，「浮起的面」和「看得见的边框」不是同一个令牌。
+///
+/// Tauri 的 `case` 表示机箱上的凹槽：浅色主题下它比 bg **暗**，当卡片底
+/// 会让浅色界面发脏；深色主题下它比 bg 亮，正是要的那一层。所以卡片面按
+/// 明暗取不同令牌，边框同理 —— 浅色里 hair 与面板只差十来个色阶，
+/// 1px 线立不住，要落到深一级的 lineFaint。
+extension ToneLayers on ToneSet {
+  /// 卡片圆角 / 控件圆角。柔和版比工业版放大一档。
+  static const double cardRadius = 12;
+  static const double controlRadius = 8;
+
+  /// 卡片常态面：永远取比底色亮的那一层。
+  Color cardFace(Brightness brightness) =>
+      brightness == Brightness.dark ? kase : panelHi;
+
+  /// 卡片悬停面：深色提亮一档；浅色已经是最高亮面，反馈交给投影加深。
+  Color cardFaceRaised(Brightness brightness) =>
+      brightness == Brightness.dark ? kaseHi : panelHi;
+
+  /// 卡片描边：深色靠一条发丝线收边；浅色不画线 —— 那里改用柔和投影
+  /// 分层，线加阴影一起上会显脏。
+  Color? cardLine(Brightness brightness) =>
+      brightness == Brightness.dark ? hair : null;
+
+  /// 卡片投影：浅色有、深色没有（深色靠面提亮分层，投影只会压暗）。
+  ///
+  /// 深色这边给的是**全透明**的投影而不是空列表：`BoxShadow.lerpList` 遇到
+  /// 一边为空会走「单边缩放」分支，只缩模糊半径、alpha 不动 —— 过渡时影子
+  /// 像被吸进卡片里；两边都是同构的 shadow，alpha 才能平滑淡到 0。
+  List<BoxShadow> cardShadow(Brightness brightness, {bool raised = false}) {
+    final alpha = brightness == Brightness.dark
+        ? 0.0
+        : (raised ? 0.12 : 0.07);
+    return <BoxShadow>[
+      // 收缩过的投影：网格间距只有十来个像素，22 以上的模糊半径会溢到
+      // 相邻卡片上，看着像脏。卡片要的是「轻轻浮起」，不是浮层那种大投影。
+      BoxShadow(
+        color: const Color(0xFF000000).withValues(alpha: alpha),
+        blurRadius: raised ? 18 : 14,
+        offset: Offset(0, raised ? 6 : 4),
+        spreadRadius: -2,
+      ),
+    ];
+  }
+}
+
+/// 柔和卡片的统一装饰：浅色走「白面 + 投影」，深色走「提亮面 + 发丝线」。
+///
+/// 放在这里而不是每处手写，是因为设置页的区块、网格里的作品卡必须长得
+/// 是同一个东西 —— 两边各写一遍迟早会飘。
+BoxDecoration softCardDecoration(
+  BuildContext context, {
+  bool raised = false,
+  double radius = ToneLayers.cardRadius,
+}) {
+  final theme = Theme.of(context);
+  final tokens = theme.extension<ToneTokens>() ??
+      ToneTokens.of(
+        theme.brightness == Brightness.dark
+            ? kArchiveTone.dark
+            : kArchiveTone.light,
+        theme.brightness,
+      );
+  return BoxDecoration(
+    color: raised ? tokens.cardRaised : tokens.card,
+    borderRadius: BorderRadius.circular(radius),
+    // 描边在深浅色里都要占位。BoxDecoration 的 border 是以 padding 的形式
+    // 挤窄内容区的 —— 只在深色画线，切主题时整页内容就会左右各缩 1px
+    // （3.25 倍屏上是 3 个物理像素，肉眼能看出「跳了一下」）。浅色用全透明
+    // 的线，视觉上仍然没有描边，但布局两端一致。
+    border: Border.all(color: tokens.cardLine),
+    boxShadow: raised ? tokens.cardShadowRaised : tokens.cardShadow,
+  );
+}
+
 /// Material 没有 hair / case / well 这几层，组件要用时从这里取。
+///
+/// 卡片要用的那几层（面 / 悬停面 / 描边 / 投影）在这里**提前算成颜色**，
+/// 而不是留成「按 brightness 现算」的函数。原因：`ThemeData.lerp` 对
+/// brightness 是离散的（过渡到中点才翻转），现算的话会在中途从 panelHi
+/// 跳到 kase，颜色闪一下；定成字段之后两端都是同一个 Color，能顺着
+/// `lerp` 一路渐变过去。
 class ToneTokens extends ThemeExtension<ToneTokens> {
-  const ToneTokens(this.set);
+  const ToneTokens({
+    required this.set,
+    required this.card,
+    required this.cardRaised,
+    required this.cardLine,
+    required this.cardShadow,
+    required this.cardShadowRaised,
+  });
+
+  factory ToneTokens.of(ToneSet set, Brightness brightness) => ToneTokens(
+        set: set,
+        card: set.cardFace(brightness),
+        cardRaised: set.cardFaceRaised(brightness),
+        cardLine: set.cardLine(brightness) ?? const Color(0x00000000),
+        cardShadow: set.cardShadow(brightness),
+        cardShadowRaised: set.cardShadow(brightness, raised: true),
+      );
 
   final ToneSet set;
+  final Color card;
+  final Color cardRaised;
+  final Color cardLine;
+  final List<BoxShadow> cardShadow;
+  final List<BoxShadow> cardShadowRaised;
 
   @override
-  ToneTokens copyWith({ToneSet? set}) => ToneTokens(set ?? this.set);
+  ToneTokens copyWith({
+    ToneSet? set,
+    Color? card,
+    Color? cardRaised,
+    Color? cardLine,
+    List<BoxShadow>? cardShadow,
+    List<BoxShadow>? cardShadowRaised,
+  }) =>
+      ToneTokens(
+        set: set ?? this.set,
+        card: card ?? this.card,
+        cardRaised: cardRaised ?? this.cardRaised,
+        cardLine: cardLine ?? this.cardLine,
+        cardShadow: cardShadow ?? this.cardShadow,
+        cardShadowRaised: cardShadowRaised ?? this.cardShadowRaised,
+      );
 
   @override
-  ToneTokens lerp(ThemeExtension<ToneTokens>? other, double t) => this;
+  ToneTokens lerp(ThemeExtension<ToneTokens>? other, double t) {
+    if (other is! ToneTokens) return this;
+    return ToneTokens(
+      set: ToneSet.lerp(set, other.set, t),
+      card: Color.lerp(card, other.card, t)!,
+      cardRaised: Color.lerp(cardRaised, other.cardRaised, t)!,
+      cardLine: Color.lerp(cardLine, other.cardLine, t)!,
+      cardShadow:
+          BoxShadow.lerpList(cardShadow, other.cardShadow, t) ?? const [],
+      cardShadowRaised:
+          BoxShadow.lerpList(cardShadowRaised, other.cardShadowRaised, t) ??
+              const [],
+    );
+  }
+}
+
+/// 在组件里直接取令牌：`context.tones.hair`。
+///
+/// 令牌没挂进主题时（比如某个屏用了自建的 ThemeData）退回 ARCHIVE，
+/// 而不是崩在 `!` 上 —— 配色缺一层只会难看，不该白屏。
+extension ToneContext on BuildContext {
+  ToneSet get tones {
+    final theme = Theme.of(this);
+    return theme.extension<ToneTokens>()?.set ??
+        (theme.brightness == Brightness.dark
+            ? kArchiveTone.dark
+            : kArchiveTone.light);
+  }
 }

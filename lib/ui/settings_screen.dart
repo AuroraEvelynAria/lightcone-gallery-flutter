@@ -11,6 +11,7 @@ import 'brand.dart';
 import 'directory_picker.dart';
 import 'meta_sheet.dart';
 import 'palettes.dart';
+import 'tone.dart';
 import 'update_dialog.dart';
 import '../update/update_service.dart';
 
@@ -294,9 +295,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ListTile(
                     leading: const Icon(Icons.file_upload_outlined),
                     title: const Text('导入索引备份'),
-                    subtitle: const Text(
-                      '整库替换；.lcbak 含画师头像，旧 .db 不含',
-                    ),
+                    subtitle: const Text('整库替换；.lcbak 含画师头像，旧 .db 不含'),
                     enabled: !_busy,
                     onTap: () async {
                       final ok = await _confirm(
@@ -318,9 +317,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ListTile(
                     leading: const Icon(Icons.file_download_outlined),
                     title: const Text('导出完整备份'),
-                    subtitle: const Text(
-                      '索引数据库 + 画师头像，换机后不用重新下载头像',
-                    ),
+                    subtitle: const Text('索引数据库 + 画师头像，换机后不用重新下载头像'),
                     enabled: !_busy,
                     onTap: () => _run(widget.state.exportBackup),
                   ),
@@ -513,8 +510,10 @@ class _Section extends StatelessWidget {
             ),
           ),
         ),
-        Card(
-          margin: EdgeInsets.zero,
+        // 不用 Card：Material 的 elevation 阴影半径固定、压不出
+        // 「0 8px 24px 6%」这种柔和投影，而浅色主题的分层全靠它。
+        Container(
+          decoration: softCardDecoration(context),
           clipBehavior: Clip.antiAlias,
           child: Column(children: children),
         ),
@@ -604,11 +603,18 @@ class _PalettePicker extends StatelessWidget {
         children: [
           Text('配色', style: theme.textTheme.bodyMedium),
           const SizedBox(height: 4),
-          Text('种子色 + 对应的深色底，深浅主题都跟着换', style: theme.textTheme.labelSmall),
+          Text(
+            '九套取自桌面版，每套明暗各一组色阶；点色点即换',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: context.tones.textMuted,
+            ),
+          ),
           const SizedBox(height: 10),
           Wrap(
-            spacing: 14,
-            runSpacing: 10,
+            // 每个色块比原来宽 10px：`COLD FRONT` 是九套里唯一放不下的
+            // 英文名，原来被切成 `COLD`，还因为右半边被裁而看着像偏左。
+            spacing: 6,
+            runSpacing: 8,
             children: [
               for (final palette in kThemePalettes)
                 _PaletteSwatch(
@@ -638,41 +644,59 @@ class _PaletteSwatch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tones = context.tones;
     return InkWell(
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(8),
       onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: palette.seed,
-                border: Border.all(
-                  color: selected
-                      ? theme.colorScheme.onSurface
-                      : Colors.transparent,
-                  width: 2,
+      child: SizedBox(
+        width: 56,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: palette.seed,
+                  border: Border.all(
+                    color: selected ? tones.fg : tones.hair,
+                    width: selected ? 2 : 1,
+                  ),
+                ),
+                child: selected
+                    ? const Icon(Icons.check, size: 18, color: Colors.black87)
+                    : null,
+              ),
+              const SizedBox(height: 5),
+              // 中文在上、英文代号在下：用户认的是颜色和中文名，
+              // 英文留着是因为 Tauri 桌面版和主题文件都按它叫。
+              Text(
+                palette.displayName,
+                maxLines: 1,
+                textAlign: TextAlign.center,
+                softWrap: false,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: selected ? tones.accent : tones.fgSoft,
                 ),
               ),
-              child: selected
-                  ? const Icon(Icons.check, size: 18, color: Colors.black87)
-                  : null,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              palette.name,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: selected
-                    ? theme.colorScheme.primary
-                    : theme.colorScheme.onSurfaceVariant,
+              Text(
+                palette.name,
+                maxLines: 1,
+                textAlign: TextAlign.center,
+                softWrap: false,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontSize: 8,
+                  height: 1.3,
+                  letterSpacing: 0.2,
+                  color: tones.mark,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

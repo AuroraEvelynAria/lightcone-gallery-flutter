@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'blur_thumb.dart';
+import 'tone.dart';
 import 'page_badge.dart';
 
 /// 桌面点击卡片的修饰键状态：Ctrl/Meta = 加选，Shift = 连选。
@@ -86,8 +87,10 @@ class _ArtworkCardState extends State<ArtworkCard> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final radius = BorderRadius.circular(10);
-    // 悬停：描边提亮 + 一线阴影，给鼠标一个「这里可以点」的反馈
+    final tones = context.tones;
+    final radius = BorderRadius.circular(ToneLayers.cardRadius);
+    // 悬停：面提一级 + 描边换强调色，给鼠标一个「这里可以点」的反馈。
+    // 不用投影 —— 这套配色靠层次与 1px 线立结构，阴影只会糊掉边缘。
     final hovered = _hovered && !widget.selectionMode;
 
     Widget picture = AspectRatio(
@@ -100,7 +103,7 @@ class _ArtworkCardState extends State<ArtworkCard> {
           fit: BoxFit.cover,
           gaplessPlayback: true,
           errorBuilder: (_, _, _) => ColoredBox(
-            color: scheme.surfaceContainerHighest,
+            color: tones.panel,
             child: const Center(
               child: Icon(Icons.broken_image_outlined, size: 24),
             ),
@@ -120,113 +123,108 @@ class _ArtworkCardState extends State<ArtworkCard> {
       onExit: (_) {
         if (_hovered) setState(() => _hovered = false);
       },
-      child: Material(
-        color: scheme.surfaceContainerLow,
-        elevation: hovered ? 3 : 0,
-        shadowColor: Colors.black.withValues(alpha: 0.35),
-        shape: RoundedRectangleBorder(
-          borderRadius: radius,
-          side: BorderSide(
-            color: hovered
-                ? scheme.primary.withValues(alpha: 0.65)
-                : scheme.outlineVariant.withValues(alpha: 0.55),
-            width: hovered ? 1.4 : 1,
-          ),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          borderRadius: radius,
-          onTap: _handleTap,
-          onLongPress: widget.onLongPress,
-          // 桌面右键：优先弹上下文菜单；没给的屏退回长按语义。
-          onSecondaryTapDown: widget.onContextMenu == null
-              ? null
-              : (details) => widget.onContextMenu!(details.globalPosition),
-          onSecondaryTap: widget.onContextMenu != null
-              ? null
-              : widget.onLongPress,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Stack(
-                children: [
-                  picture,
-                  if (widget.pageCount > 1)
-                    Positioned(
-                      right: 6,
-                      top: 6,
-                      child: PageBadge(count: widget.pageCount),
-                    ),
-                  if (widget.selectionMode)
-                    Positioned.fill(
-                      child: ColoredBox(
-                        color: widget.selected
-                            ? Colors.black45
-                            : Colors.black26,
-                      ),
-                    ),
-                  if (widget.selectionMode && widget.selected)
-                    const Positioned(
-                      left: 6,
-                      top: 6,
-                      child: Icon(
-                        Icons.check_circle,
-                        size: 24,
-                        color: Colors.white,
-                      ),
-                    ),
-                ],
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(10, 6, 2, 6),
-                child: Row(
+      // 装饰（面 + 投影 + 发丝线）铺在底层，Material 只负责裁剪和水波，
+      // 否则 Material 的 shape 描边会把柔和投影切掉。
+      child: DecoratedBox(
+        decoration: softCardDecoration(context, raised: hovered),
+        child: Material(
+          type: MaterialType.transparency,
+          shape: RoundedRectangleBorder(borderRadius: radius),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            borderRadius: radius,
+            onTap: _handleTap,
+            onLongPress: widget.onLongPress,
+            // 桌面右键：优先弹上下文菜单；没给的屏退回长按语义。
+            onSecondaryTapDown: widget.onContextMenu == null
+                ? null
+                : (details) => widget.onContextMenu!(details.globalPosition),
+            onSecondaryTap: widget.onContextMenu != null
+                ? null
+                : widget.onLongPress,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Stack(
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.title.isEmpty ? '未命名' : widget.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 1),
-                          Text(
-                            widget.artist.isEmpty ? '未知画师' : widget.artist,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
+                    picture,
+                    if (widget.pageCount > 1)
+                      Positioned(
+                        right: 6,
+                        top: 6,
+                        child: PageBadge(count: widget.pageCount),
                       ),
-                    ),
-                    if (!widget.selectionMode && widget.onFavorite != null)
-                      IconButton(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.all(6),
-                        constraints: const BoxConstraints(
-                          minWidth: 36,
-                          minHeight: 36,
+                    if (widget.selectionMode)
+                      Positioned.fill(
+                        child: ColoredBox(
+                          color: widget.selected
+                              ? Colors.black45
+                              : Colors.black26,
                         ),
-                        iconSize: 20,
-                        tooltip: widget.favorite ? '取消收藏' : '收藏',
-                        onPressed: widget.onFavorite,
-                        icon: Icon(
-                          widget.favorite
-                              ? Icons.favorite
-                              : Icons.favorite_border,
-                          color: widget.favorite ? scheme.error : scheme.outline,
+                      ),
+                    if (widget.selectionMode && widget.selected)
+                      const Positioned(
+                        left: 6,
+                        top: 6,
+                        child: Icon(
+                          Icons.check_circle,
+                          size: 24,
+                          color: Colors.white,
                         ),
                       ),
                   ],
                 ),
-              ),
-            ],
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 6, 2, 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.title.isEmpty ? '未命名' : widget.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 1),
+                            Text(
+                              widget.artist.isEmpty ? '未知画师' : widget.artist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: tones.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (!widget.selectionMode && widget.onFavorite != null)
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.all(6),
+                          constraints: const BoxConstraints(
+                            minWidth: 36,
+                            minHeight: 36,
+                          ),
+                          iconSize: 20,
+                          tooltip: widget.favorite ? '取消收藏' : '收藏',
+                          onPressed: widget.onFavorite,
+                          icon: Icon(
+                            widget.favorite
+                                ? Icons.favorite
+                                : Icons.favorite_border,
+                            color: widget.favorite ? scheme.error : tones.mark,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -436,10 +436,10 @@ class _ArtworksScreenState extends State<ArtworksScreen> {
         final thumbSize = (cellPx * 1.6).round().clamp(320, 1024);
         return MasonryGridView.count(
           controller: _controller,
-          padding: const EdgeInsets.all(8),
+          padding: const EdgeInsets.all(12),
           crossAxisCount: columns,
-          mainAxisSpacing: 8,
-          crossAxisSpacing: 8,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
           itemCount: _rows.length,
           itemBuilder: (context, index) {
             final row = _rows[index];

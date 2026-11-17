@@ -53,6 +53,24 @@ class _LightConeBootstrapState extends State<LightConeBootstrap> {
   /// 首次启动（还没有任何图库）：先让用户选目录。
   bool _needsOnboarding = false;
 
+  /// 主题对象必须缓存。
+  ///
+  /// `_theme` 每调用一次就返回一个新实例，而 MaterialApp 用的是
+  /// AnimatedTheme（按 identity 判断要不要过渡）—— 不缓存的话，每一次
+  /// setState（滚动、点收藏、状态刷新）都会重新触发一遍主题动画，
+  /// 界面上就是一层层没完没了的颜色漂移。
+  int? _themeSeed;
+  ThemeData? _lightTheme;
+  ThemeData? _darkTheme;
+
+  void _ensureThemes() {
+    final seed = _settings.palette.seed.toARGB32();
+    if (_themeSeed == seed && _lightTheme != null) return;
+    _themeSeed = seed;
+    _lightTheme = _theme(Brightness.light, _settings.palette);
+    _darkTheme = _theme(Brightness.dark, _settings.palette);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -101,8 +119,9 @@ class _LightConeBootstrapState extends State<LightConeBootstrap> {
         await repo.ensurePhoneLibrary();
       }
 
-      // 开屏至少停 600ms：否则冷启动够快时就是一闪而过的白闪
-      const minimum = Duration(milliseconds: 600);
+      // 开屏至少停 900ms：一是冷启动够快时不会一闪而过，二是要和
+      // SplashScreen 里那段入场动画（900ms）对齐 —— 短了动画会被切一半。
+      const minimum = Duration(milliseconds: 900);
       final elapsed = DateTime.now().difference(started);
       if (elapsed < minimum) {
         await Future<void>.delayed(minimum - elapsed);
@@ -168,15 +187,20 @@ class _LightConeBootstrapState extends State<LightConeBootstrap> {
       home = HomeShell(key: const ValueKey('home'), state: state);
     }
 
+    _ensureThemes();
     return AppSettingsScope(
       settings: _settings,
       child: MaterialApp(
         title: '光锥图库',
         debugShowCheckedModeBanner: false,
         scaffoldMessengerKey: _messengerKey,
-        theme: _theme(Brightness.light, _settings.palette),
-        darkTheme: _theme(Brightness.dark, _settings.palette),
+        theme: _lightTheme,
+        darkTheme: _darkTheme,
         themeMode: _settings.themeMode,
+        // 默认 200ms + linear 太短太硬。380ms 配 easeInOutCubic 才是
+        // 「颜色慢慢化开」的观感；和下面页面切换的时长一致。
+        themeAnimationDuration: const Duration(milliseconds: 380),
+        themeAnimationCurve: Curves.easeInOutCubic,
         home: AnimatedSwitcher(
           duration: const Duration(milliseconds: 380),
           switchInCurve: Curves.easeOut,
@@ -191,7 +215,9 @@ class _LightConeBootstrapState extends State<LightConeBootstrap> {
 /// 配色：种子色与深色底都跟着色板走（设置里可换）。
 ThemeData _theme(Brightness brightness, ThemePalette palette) {
   // 有显式令牌就按令牌来（Tauri 那套工业配色）；没有才回退到种子推导。
-  final tones = palette.tones?.of(brightness);
+  final raw = palette.tones?.of(brightness);
+  final tones = raw == null ? null : softenTones(raw, brightness);
+  final isDark = brightness == Brightness.dark;
   final scheme = tones != null
       ? colorSchemeFromTones(tones, brightness)
       : ColorScheme.fromSeed(
@@ -207,13 +233,157 @@ ThemeData _theme(Brightness brightness, ThemePalette palette) {
     scaffoldBackgroundColor: scheme.surface,
     splashFactory: InkSparkle.splashFactory,
     visualDensity: VisualDensity.standard,
-    extensions: tones == null ? null : <ThemeExtension<dynamic>>[ToneTokens(tones)],
+    extensions: tones == null
+        ? null
+        : <ThemeExtension<dynamic>>[ToneTokens.of(tones, brightness)],
   );
-  if (!Platform.isWindows) return base;
+
+  // 令牌体系比 Material 多两级面（panel / kase、kaseHi）和三级线（hair /
+  // lineFaint / lineDim），组件默认值会把这几层压平：Card 默认拿
+  // surfaceContainerLow，那等于 panel —— 暗色下离 bg 只有 6 个色阶，
+  // 网格上的卡片看不出边界。所以全局组件主题在这里一次性覆盖，
+  // 不为「换个底色」逐屏改组件。
+  final themed = tones == null
+      ? base
+      : base.copyWith(
+          cardTheme: CardThemeData(
+            color: tones.cardFace(brightness),
+            surfaceTintColor: Colors.transparent,
+            shadowColor: Colors.transparent,
+            elevation: 0,
+            margin: EdgeInsets.zero,
+            // 描边按明暗决定：浅色交给投影，深色留一条发丝线。
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(ToneLayers.cardRadius),
+              side: BorderSide(
+                color: tones.cardLine(brightness) ?? const Color(0x00000000),
+              ),
+            ),
+          ),
+          // 分隔线一律落到 1px 发丝线：工业界面里线是结构，不是装饰。
+          dividerTheme: DividerThemeData(
+            color: tones.hair,
+            thickness: 1,
+            space: 1,
+          ),
+          appBarTheme: AppBarThemeData(
+            backgroundColor: tones.bg,
+            foregroundColor: tones.fg,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            centerTitle: false,
+          ),
+          navigationBarTheme: NavigationBarThemeData(
+            backgroundColor: tones.panel,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            // 浅色下 kaseHi 是近白，选中胶囊和底栏几乎同色；用强调色的
+            // 淡染，选中项才有存在感。
+            indicatorColor: isDark
+                ? tones.kaseHi
+                : tones.accent.withValues(alpha: 0.12),
+          ),
+          navigationRailTheme: NavigationRailThemeData(
+            backgroundColor: tones.panel,
+            indicatorColor: isDark
+                ? tones.kaseHi
+                : tones.accent.withValues(alpha: 0.12),
+          ),
+          dialogTheme: DialogThemeData(
+            backgroundColor: tones.panel,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+              side: BorderSide(color: tones.hair),
+            ),
+          ),
+          bottomSheetTheme: BottomSheetThemeData(
+            backgroundColor: tones.panel,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            modalBackgroundColor: tones.panel,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+            ),
+          ),
+          // 分段按钮的选中态在 M3 里取 secondaryContainer —— 补全配色槽位后
+          // 它变成近白，选中段和底几乎同色。这里显式给一层强调色淡染。
+          segmentedButtonTheme: SegmentedButtonThemeData(
+            style: ButtonStyle(
+              backgroundColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) {
+                  return isDark
+                      ? tones.kaseHi
+                      : tones.accent.withValues(alpha: 0.18);
+                }
+                return Colors.transparent;
+              }),
+              foregroundColor: WidgetStateProperty.resolveWith(
+                (states) => states.contains(WidgetState.selected)
+                    ? tones.fg
+                    : tones.textMuted,
+              ),
+              side: WidgetStatePropertyAll(BorderSide(color: tones.hair)),
+              shape: WidgetStatePropertyAll(
+                RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(ToneLayers.controlRadius),
+                ),
+              ),
+              textStyle: const WidgetStatePropertyAll(
+                TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ),
+          // 筛选芯片同理：选中态原来跟着 secondaryContainer 走。
+          chipTheme: ChipThemeData(
+            backgroundColor: Colors.transparent,
+            selectedColor: isDark
+                ? tones.kaseHi
+                : tones.accent.withValues(alpha: 0.18),
+            secondarySelectedColor: isDark
+                ? tones.kaseHi
+                : tones.accent.withValues(alpha: 0.18),
+            side: BorderSide(color: tones.hair),
+            labelStyle: TextStyle(color: tones.fgSoft),
+            secondaryLabelStyle: TextStyle(
+              color: tones.fg,
+              fontWeight: FontWeight.w600,
+            ),
+            checkmarkColor: tones.accent,
+            showCheckmark: true,
+          ),
+          // M3 默认按钮是全圆角胶囊，和这套直角工业排版不是一路。
+          filledButtonTheme: FilledButtonThemeData(
+            style: FilledButton.styleFrom(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(ToneLayers.controlRadius),
+              ),
+            ),
+          ),
+          outlinedButtonTheme: OutlinedButtonThemeData(
+            style: OutlinedButton.styleFrom(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(ToneLayers.controlRadius),
+              ),
+              side: BorderSide(color: tones.hair),
+            ),
+          ),
+          textButtonTheme: TextButtonThemeData(
+            style: TextButton.styleFrom(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(ToneLayers.controlRadius),
+              ),
+            ),
+          ),
+        );
+
+  if (!Platform.isWindows) return themed;
   // Windows 默认的 Roboto/Segoe UI 对中文会落到不同的系统回退字体，
   // 同一段文字里中英混排容易粗细不一致。桌面统一用雅黑系。
   const fallback = ['Microsoft YaHei', 'Segoe UI', 'Segoe UI Emoji'];
-  return base.copyWith(
+  return themed.copyWith(
     textTheme: base.textTheme.apply(
       fontFamily: 'Microsoft YaHei UI',
       fontFamilyFallback: fallback,
